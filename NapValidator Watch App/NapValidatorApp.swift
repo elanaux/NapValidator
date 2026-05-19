@@ -9,6 +9,10 @@ import SwiftUI
 
 @main
 struct NapValidator_Watch_AppApp: App {
+    init() {
+        NotificationCoordinator.shared.bootstrap()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
