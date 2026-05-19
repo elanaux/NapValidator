@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Xcode build output
+build/
+DerivedData/
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+
+# Xcode workspace / project user files
+*.xcworkspace/xcuserdata/
+project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# CocoaPods (if ever added)
+Pods/
+
+# Carthage (if ever added)
+Carthage/Build/
+
+# fastlane (if ever added)
+fastlane/report.xml
+fastlane/screenshots/
+fastlane/test_output/
+
+# Misc
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

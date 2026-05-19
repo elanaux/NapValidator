@@ -108,6 +108,7 @@ final class SessionRecorder {
     private var algorithmDecisions: [NapAlgorithm.Decision] = []
     private var algorithmParameters: NapAlgorithm.Parameters?
     private var lastWristOrientation: WristOrientation?
+    private var lastHRSampleTimestamp: TimeInterval?
     private var bootWallClock: TimeInterval = 0
 
     private let motionManager = CMMotionManager()
@@ -136,6 +137,7 @@ final class SessionRecorder {
         algorithmDecisions.removeAll()
         algorithmParameters = nil
         lastWristOrientation = nil
+        lastHRSampleTimestamp = nil
         bootWallClock = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
 
         WKInterfaceDevice.current().isBatteryMonitoringEnabled = true
@@ -168,7 +170,10 @@ final class SessionRecorder {
     nonisolated func ingestHeartRate(bpm: Double, at date: Date) {
         let sample = HRSample(t: date.timeIntervalSince1970, bpm: bpm)
         Task { @MainActor [weak self] in
-            self?.hrSamples.append(sample)
+            guard let self else { return }
+            if sample.t == self.lastHRSampleTimestamp { return }
+            self.lastHRSampleTimestamp = sample.t
+            self.hrSamples.append(sample)
         }
     }
 

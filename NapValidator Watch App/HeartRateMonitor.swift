@@ -93,7 +93,7 @@ final class HeartRateMonitor: NSObject {
         }
 
         let configuration = HKWorkoutConfiguration()
-        configuration.activityType = .mindAndBody
+        configuration.activityType = .other
         configuration.locationType = .indoor
 
         do {
@@ -119,9 +119,6 @@ final class HeartRateMonitor: NSObject {
 
             session.startActivity(with: startDate)
             try await builder.beginCollection(at: startDate)
-
-            session.pause()
-            Self.logger.info("Paused session immediately after start to suppress ring credits")
 
             status = .running
             Self.logger.info("Workout session started at t=\(startDate.timeIntervalSince1970)")
@@ -155,7 +152,7 @@ final class HeartRateMonitor: NSObject {
                 let energy = await self.querySumAndCount(type: activeEnergyType, unit: .kilocalorie(), start: auditStartDate, end: endDate)
                 let exercise = await self.querySumAndCount(type: exerciseTimeType, unit: .minute(), start: auditStartDate, end: endDate)
                 let audit = SessionRecorder.ExperimentAudit(
-                    pausedImmediately: true,
+                    pausedImmediately: false,
                     activeEnergyBurnedSampleCount: energy.count,
                     activeEnergyBurnedTotalKcal: energy.total,
                     appleExerciseTimeSampleCount: exercise.count,
@@ -184,6 +181,7 @@ final class HeartRateMonitor: NSObject {
         Self.logger.info("DeleteDiag: session window start=\(sessionStart.timeIntervalSince1970) end=\(sessionEnd.timeIntervalSince1970)")
 
         let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        let exerciseTimeType = HKQuantityType.quantityType(forIdentifier: .appleExerciseTime)!
         let workouts = await queryOurWorkouts(start: sessionStart, end: sessionEnd)
         Self.logger.info("DeleteDiag: re-query returned \(workouts.count) workout(s)")
         for w in workouts {
@@ -203,7 +201,14 @@ final class HeartRateMonitor: NSObject {
             Self.logger.info("DeleteDiag:   energySample[\(i)] uuid=\(s.uuid.uuidString, privacy: .public) source.bundleID=\(s.sourceRevision.source.bundleIdentifier, privacy: .public)")
         }
 
+        let exerciseSamples = await querySamples(type: exerciseTimeType, predicate: associatedPredicate)
+        Self.logger.info("DeleteDiag: found \(exerciseSamples.count) associated appleExerciseTime sample(s)")
+        for (i, s) in exerciseSamples.enumerated() {
+            Self.logger.info("DeleteDiag:   exerciseSample[\(i)] uuid=\(s.uuid.uuidString, privacy: .public) source.bundleID=\(s.sourceRevision.source.bundleIdentifier, privacy: .public)")
+        }
+
         await deleteByPredicateWithRetry(label: "activeEnergyBurned", type: energyType, predicate: associatedPredicate)
+        await deleteByPredicateWithRetry(label: "appleExerciseTime", type: exerciseTimeType, predicate: associatedPredicate)
         await deleteByPredicateWithRetry(label: "workout", type: HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: workout.uuid))
     }
 
