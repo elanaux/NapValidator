@@ -136,11 +136,9 @@ final class HeartRateMonitor: NSObject {
         session.end()
 
         Task {
-            var workoutFinished = false
             do {
                 try await builder.endCollection(at: endDate)
                 _ = try await builder.finishWorkout()
-                workoutFinished = true
                 Self.logger.info("Workout session ended at t=\(endDate.timeIntervalSince1970). Total samples: \(self.sampleCount)")
             } catch {
                 Self.logger.error("End workout failed: \(error.localizedDescription)")
@@ -162,103 +160,10 @@ final class HeartRateMonitor: NSObject {
                 self.onExperimentAudit?(audit)
             }
 
-            if workoutFinished, let auditStartDate {
-                await self.deleteWorkoutAndEnergySamples(sessionStart: auditStartDate, sessionEnd: endDate)
-            }
-
             self.session = nil
             self.builder = nil
             self.sessionStartDate = nil
             self.status = .idle
-        }
-    }
-
-    private func deleteWorkoutAndEnergySamples(sessionStart: Date, sessionEnd: Date) async {
-        let bundleID = Bundle.main.bundleIdentifier ?? "nil"
-        let defaultSource = HKSource.default()
-        Self.logger.info("DeleteDiag: Bundle.main.bundleIdentifier=\(bundleID, privacy: .public)")
-        Self.logger.info("DeleteDiag: HKSource.default() name=\(defaultSource.name, privacy: .public) bundleID=\(defaultSource.bundleIdentifier, privacy: .public)")
-        Self.logger.info("DeleteDiag: session window start=\(sessionStart.timeIntervalSince1970) end=\(sessionEnd.timeIntervalSince1970)")
-
-        let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
-        let exerciseTimeType = HKQuantityType.quantityType(forIdentifier: .appleExerciseTime)!
-        let workouts = await queryOurWorkouts(start: sessionStart, end: sessionEnd)
-        Self.logger.info("DeleteDiag: re-query returned \(workouts.count) workout(s)")
-        for w in workouts {
-            let src = w.sourceRevision.source
-            Self.logger.info("DeleteDiag:   workout uuid=\(w.uuid.uuidString, privacy: .public) source.name=\(src.name, privacy: .public) source.bundleID=\(src.bundleIdentifier, privacy: .public) start=\(w.startDate.timeIntervalSince1970) end=\(w.endDate.timeIntervalSince1970)")
-        }
-
-        guard let workout = workouts.first else {
-            Self.logger.error("DeleteDiag: no matching workout found by re-query; abandoning deletion")
-            return
-        }
-
-        let associatedPredicate = HKQuery.predicateForObjects(from: workout)
-        let energySamples = await querySamples(type: energyType, predicate: associatedPredicate)
-        Self.logger.info("DeleteDiag: found \(energySamples.count) associated activeEnergyBurned sample(s)")
-        for (i, s) in energySamples.enumerated() {
-            Self.logger.info("DeleteDiag:   energySample[\(i)] uuid=\(s.uuid.uuidString, privacy: .public) source.bundleID=\(s.sourceRevision.source.bundleIdentifier, privacy: .public)")
-        }
-
-        let exerciseSamples = await querySamples(type: exerciseTimeType, predicate: associatedPredicate)
-        Self.logger.info("DeleteDiag: found \(exerciseSamples.count) associated appleExerciseTime sample(s)")
-        for (i, s) in exerciseSamples.enumerated() {
-            Self.logger.info("DeleteDiag:   exerciseSample[\(i)] uuid=\(s.uuid.uuidString, privacy: .public) source.bundleID=\(s.sourceRevision.source.bundleIdentifier, privacy: .public)")
-        }
-
-        await deleteByPredicateWithRetry(label: "activeEnergyBurned", type: energyType, predicate: associatedPredicate)
-        await deleteByPredicateWithRetry(label: "appleExerciseTime", type: exerciseTimeType, predicate: associatedPredicate)
-        await deleteByPredicateWithRetry(label: "workout", type: HKObjectType.workoutType(), predicate: HKQuery.predicateForObject(with: workout.uuid))
-    }
-
-    private func deleteByPredicateWithRetry(label: String, type: HKObjectType, predicate: NSPredicate) async {
-        let maxAttempts = 2
-        for attempt in 1...maxAttempts {
-            let result = await deleteByPredicate(type: type, predicate: predicate)
-            if result.success {
-                Self.logger.info("Deleted \(label, privacy: .public): count=\(result.count) on attempt \(attempt)")
-                return
-            }
-            let ns = (result.error as NSError?) ?? NSError(domain: "unknown", code: 0)
-            Self.logger.error("DeleteDiag: \(label, privacy: .public) attempt \(attempt) failed domain=\(ns.domain, privacy: .public) code=\(ns.code) desc=\(ns.localizedDescription, privacy: .public)")
-            for (key, value) in ns.userInfo {
-                Self.logger.error("DeleteDiag:   userInfo[\(key, privacy: .public)] = \(String(describing: value), privacy: .public)")
-            }
-            if attempt < maxAttempts {
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
-        Self.logger.error("\(label, privacy: .public) deletion failed after \(maxAttempts) attempts")
-    }
-
-    private func deleteByPredicate(type: HKObjectType, predicate: NSPredicate) async -> (success: Bool, count: Int, error: Error?) {
-        await withCheckedContinuation { continuation in
-            healthStore.deleteObjects(of: type, predicate: predicate) { success, count, error in
-                continuation.resume(returning: (success, count, error))
-            }
-        }
-    }
-
-    private func queryOurWorkouts(start: Date, end: Date) async -> [HKWorkout] {
-        let timePredicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        let sourcePredicate = HKQuery.predicateForObjects(from: Set([HKSource.default()]))
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [timePredicate, sourcePredicate])
-        let samples = await querySamples(type: HKObjectType.workoutType(), predicate: predicate)
-        return samples.compactMap { $0 as? HKWorkout }
-    }
-
-    private func querySamples(type: HKSampleType, predicate: NSPredicate) async -> [HKSample] {
-        await withCheckedContinuation { continuation in
-            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                if let error {
-                    Self.logger.error("Sample query failed for \(type.identifier): \(error.localizedDescription)")
-                    continuation.resume(returning: [])
-                    return
-                }
-                continuation.resume(returning: samples ?? [])
-            }
-            self.healthStore.execute(query)
         }
     }
 
