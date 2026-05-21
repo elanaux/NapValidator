@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import HealthKit
 import OSLog
 
 @MainActor
@@ -25,21 +26,39 @@ final class SessionController {
 
     var phase: Phase = .idle
     let monitor = HeartRateMonitor()
-    let recorder = SessionRecorder()
-    let algorithm = NapAlgorithm()
+    let hrBuffer = HeartRateBuffer()
+    let recorder: SessionRecorder
+    let algorithm: NapAlgorithm
 
     init() {
-        monitor.onHeartRate = { [recorder, algorithm] bpm, date in
-            recorder.ingestHeartRate(bpm: bpm, at: date)
-            algorithm.ingestHR(bpm: bpm, at: date)
+        let buffer = hrBuffer
+        self.recorder = SessionRecorder(hrBuffer: buffer)
+        self.algorithm = NapAlgorithm(hrBuffer: buffer)
+
+        let algorithmRef = algorithm
+        // Both callbacks below are always fired from a MainActor-isolated
+        // context (handleHRSamples wraps in Task @MainActor; buffer.ingest is
+        // @MainActor). assumeIsolated turns that runtime fact into a static
+        // assertion so we can call MainActor APIs without spawning fresh
+        // Tasks per sample — preserving the in-order synchronous chain
+        // monitor → buffer → algorithm.
+        monitor.onHeartRateSample = { (sample: HKQuantitySample) in
+            MainActor.assumeIsolated {
+                buffer.ingest(sample)
+            }
         }
-        monitor.onWorkoutStateChange = { [recorder] from, to, date in
+        buffer.onAppend = { (entry: HeartRateBuffer.Entry) in
+            MainActor.assumeIsolated {
+                algorithmRef.onHRAppended(at: entry.t)
+            }
+        }
+        monitor.onWorkoutStateChange = { [recorder = self.recorder] from, to, date in
             recorder.ingestWorkoutStateChange(from: from, to: to, at: date)
         }
-        recorder.onMotionSample = { [algorithm] magnitude, date in
+        recorder.onMotionSample = { [algorithm = self.algorithm] magnitude, date in
             algorithm.ingestMotion(magnitude: magnitude, at: date)
         }
-        algorithm.onDecision = { [recorder] decision in
+        algorithm.onDecision = { [recorder = self.recorder] decision in
             recorder.ingestAlgorithmDecision(decision)
         }
     }

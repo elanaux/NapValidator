@@ -75,6 +75,9 @@ final class SessionRecorder {
 
     struct SessionFile: Codable {
         let sessionUUID: String
+        // Optional so older session files written before this field existed
+        // still decode (via mutateFile / loadFile). New sessions always set it.
+        var buildMarker: String?
         let startTimestamp: TimeInterval
         var endTimestamp: TimeInterval?
         var endCause: EndCause?
@@ -98,9 +101,9 @@ final class SessionRecorder {
 
     var onMotionSample: ((Double, Date) -> Void)?
 
+    private let hrBuffer: HeartRateBuffer
     private var startDate: Date?
     private var batteryStart: Float = 0
-    private var hrSamples: [HRSample] = []
     private var motionSamples: [MotionSample] = []
     private var screenEvents: [ScreenEvent] = []
     private var wristEvents: [WristEvent] = []
@@ -108,8 +111,11 @@ final class SessionRecorder {
     private var algorithmDecisions: [NapAlgorithm.Decision] = []
     private var algorithmParameters: NapAlgorithm.Parameters?
     private var lastWristOrientation: WristOrientation?
-    private var lastHRSampleTimestamp: TimeInterval?
     private var bootWallClock: TimeInterval = 0
+
+    init(hrBuffer: HeartRateBuffer) {
+        self.hrBuffer = hrBuffer
+    }
 
     private let motionManager = CMMotionManager()
     private let motionQueue: OperationQueue = {
@@ -129,7 +135,7 @@ final class SessionRecorder {
         sessionUUID = uuid
         let now = Date()
         startDate = now
-        hrSamples.removeAll()
+        hrBuffer.reset()
         motionSamples.removeAll()
         screenEvents.removeAll()
         wristEvents.removeAll()
@@ -137,7 +143,6 @@ final class SessionRecorder {
         algorithmDecisions.removeAll()
         algorithmParameters = nil
         lastWristOrientation = nil
-        lastHRSampleTimestamp = nil
         bootWallClock = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
 
         WKInterfaceDevice.current().isBatteryMonitoringEnabled = true
@@ -148,7 +153,7 @@ final class SessionRecorder {
         startPartialFlush()
 
         isRunning = true
-        Self.logger.info("Session \(uuid.uuidString) started at t=\(now.timeIntervalSince1970), batteryStart=\(self.batteryStart)")
+        Self.logger.info("Session \(uuid.uuidString) started at t=\(now.timeIntervalSince1970), batteryStart=\(self.batteryStart), build=\(Build.marker)")
     }
 
     func stop(cause: EndCause) {
@@ -165,16 +170,6 @@ final class SessionRecorder {
         writeFinal(endDate: endDate, endCause: cause, batteryEnd: batteryEnd)
         isRunning = false
         Self.logger.info("Session \(self.sessionUUID?.uuidString ?? "?") stopped cause=\(cause.rawValue) batteryEnd=\(batteryEnd)")
-    }
-
-    nonisolated func ingestHeartRate(bpm: Double, at date: Date) {
-        let sample = HRSample(t: date.timeIntervalSince1970, bpm: bpm)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if sample.t == self.lastHRSampleTimestamp { return }
-            self.lastHRSampleTimestamp = sample.t
-            self.hrSamples.append(sample)
-        }
     }
 
     nonisolated func ingestWorkoutStateChange(from: String, to: String, at date: Date) {
@@ -283,8 +278,10 @@ final class SessionRecorder {
                           endCause: EndCause? = nil,
                           batteryEnd: Float? = nil) -> SessionFile? {
         guard let sessionUUID, let startDate else { return nil }
+        let hrSamples = hrBuffer.entries.map { HRSample(t: $0.t, bpm: $0.bpm) }
         return SessionFile(
             sessionUUID: sessionUUID.uuidString,
+            buildMarker: Build.marker,
             startTimestamp: startDate.timeIntervalSince1970,
             endTimestamp: endDate?.timeIntervalSince1970,
             endCause: endCause,

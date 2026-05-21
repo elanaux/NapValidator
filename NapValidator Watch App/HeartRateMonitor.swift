@@ -38,7 +38,11 @@ final class HeartRateMonitor: NSObject {
     var latestSampleDate: Date?
     var status: Status = .idle
 
+    // Legacy hook retained for interface stability. The buffer-aware path uses
+    // onHeartRateSample below to carry the HKQuantitySample (and its uuid) for
+    // identity-based dedup. Both fire from the anchored-query handler.
     var onHeartRate: ((Double, Date) -> Void)?
+    var onHeartRateSample: ((HKQuantitySample) -> Void)?
     var onWorkoutStateChange: ((String, String, Date) -> Void)?
     var onExperimentAudit: ((SessionRecorder.ExperimentAudit) -> Void)?
 
@@ -66,6 +70,8 @@ final class HeartRateMonitor: NSObject {
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private var sessionStartDate: Date?
+    private var hrQuery: HKAnchoredObjectQuery?
+    private let bpmUnit = HKUnit.count().unitDivided(by: .minute())
 
     func start() async {
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -120,6 +126,11 @@ final class HeartRateMonitor: NSObject {
             session.startActivity(with: startDate)
             try await builder.beginCollection(at: startDate)
 
+            session.pause()
+            Self.logger.info("Paused session immediately after start to suppress ring credits (pausedImmediately=true)")
+
+            await startHRAnchoredQuery(from: startDate)
+
             status = .running
             Self.logger.info("Workout session started at t=\(startDate.timeIntervalSince1970)")
         } catch {
@@ -133,12 +144,14 @@ final class HeartRateMonitor: NSObject {
 
         let endDate = Date()
         let auditStartDate = sessionStartDate
+        stopHRAnchoredQuery()
         session.end()
 
         Task {
+            var finishedWorkout: HKWorkout?
             do {
                 try await builder.endCollection(at: endDate)
-                _ = try await builder.finishWorkout()
+                finishedWorkout = try await builder.finishWorkout()
                 Self.logger.info("Workout session ended at t=\(endDate.timeIntervalSince1970). Total samples: \(self.sampleCount)")
             } catch {
                 Self.logger.error("End workout failed: \(error.localizedDescription)")
@@ -150,7 +163,7 @@ final class HeartRateMonitor: NSObject {
                 let energy = await self.querySumAndCount(type: activeEnergyType, unit: .kilocalorie(), start: auditStartDate, end: endDate)
                 let exercise = await self.querySumAndCount(type: exerciseTimeType, unit: .minute(), start: auditStartDate, end: endDate)
                 let audit = SessionRecorder.ExperimentAudit(
-                    pausedImmediately: false,
+                    pausedImmediately: true,
                     activeEnergyBurnedSampleCount: energy.count,
                     activeEnergyBurnedTotalKcal: energy.total,
                     appleExerciseTimeSampleCount: exercise.count,
@@ -160,10 +173,175 @@ final class HeartRateMonitor: NSObject {
                 self.onExperimentAudit?(audit)
             }
 
+            // Delete the workout entry from HealthKit. Workout objects ARE
+            // third-party-deletable (unlike activeEnergyBurned / appleExerciseTime,
+            // which we deliberately do not touch — they're non-third-party-
+            // deletable and near-zero under paused mode anyway). Audit above
+            // already captured their counts/totals, so deletion here doesn't
+            // race with the audit. The intent is to keep the Fitness app's
+            // workout list clean: paused mode validated ~0 ring credit, so the
+            // workout entry no longer serves as a user-visible audit record.
+            if let workout = finishedWorkout {
+                let result = await self.deleteWorkout(workout)
+                if result.success {
+                    Self.logger.info("Workout deleted on stop: success uuid=\(workout.uuid.uuidString)")
+                } else {
+                    let reason = result.error?.localizedDescription ?? "unknown error"
+                    Self.logger.error("Workout deleted on stop: failure (\(reason))")
+                }
+            } else {
+                Self.logger.error("Workout deleted on stop: failure (no workout returned from finishWorkout)")
+            }
+
             self.session = nil
             self.builder = nil
             self.sessionStartDate = nil
             self.status = .idle
+        }
+    }
+
+    private func startHRAnchoredQuery(from startDate: Date) async {
+        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let datePredicate = HKQuery.predicateForSamples(withStart: startDate, end: nil, options: .strictStartDate)
+
+        // Resolve the Apple Watch's HKSource by enumerating HR-writing sources.
+        // Designed to fail safe: if resolution is ambiguous (multiple watches
+        // paired, or locale/name mismatch), fall back to unfiltered rather
+        // than risk an over-restrictive predicate that starves the algorithm.
+        // The two log lines below distinguish the two paths so the console
+        // tells us at a glance whether the filter actually engaged.
+        let predicate: NSPredicate
+        if let watchSource = await resolveWatchHRSource() {
+            let sourcePredicate = HKQuery.predicateForObjects(from: [watchSource])
+            predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, sourcePredicate])
+            Self.logger.info("HR source filter applied: source=\(watchSource.name) bundle=\(watchSource.bundleIdentifier)")
+        } else {
+            predicate = datePredicate
+            Self.logger.info("HR source filter UNAVAILABLE, running unfiltered")
+        }
+
+        let query = HKAnchoredObjectQuery(
+            type: heartRateType,
+            predicate: predicate,
+            anchor: nil,
+            limit: HKObjectQueryNoLimit
+        ) { [weak self] _, samples, _, _, error in
+            if let error {
+                Self.logger.error("HR anchored initial: \(error.localizedDescription)")
+                return
+            }
+            self?.deliverHRSamples(samples)
+        }
+        query.updateHandler = { [weak self] _, samples, _, _, error in
+            if let error {
+                Self.logger.error("HR anchored update: \(error.localizedDescription)")
+                return
+            }
+            self?.deliverHRSamples(samples)
+        }
+        healthStore.execute(query)
+        hrQuery = query
+        Self.logger.info("HR anchored query started predicate>=\(startDate.timeIntervalSince1970)")
+    }
+
+    /// Returns the HKSource representing this Apple Watch's HR sensor, or nil
+    /// when the watch source cannot be unambiguously identified. The caller
+    /// must treat nil as "run unfiltered" — never as "filter to nothing."
+    ///
+    /// Strategy: identify the watch by inspecting a recent HR sample's HKDevice
+    /// (hardwareVersion / model), then return that sample's source. This
+    /// decouples source identity from name-string matching — `hardwareVersion`
+    /// is a firmware identifier ("Watch7,5", etc.), stable across locale and
+    /// user rename. Previous name-substring approach failed because Apple
+    /// embeds a non-breaking space (U+00A0) in "Apple Watch", which doesn't
+    /// equal an ASCII-space literal of the same visible text.
+    private func resolveWatchHRSource() async -> HKSource? {
+        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let recentPredicate = HKQuery.predicateForSamples(
+            withStart: Date().addingTimeInterval(-3600),
+            end: nil,
+            options: []
+        )
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: heartRateType,
+                predicate: recentPredicate,
+                limit: 20,
+                sortDescriptors: [sortDescriptor]
+            ) { _, samples, error in
+                if let error {
+                    Self.logger.error("HR source resolution sample query failed: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let quantitySamples = (samples as? [HKQuantitySample]) ?? []
+                if let watchSample = quantitySamples.first(where: { Self.isWatchDevice($0.device) }) {
+                    let source = watchSample.sourceRevision.source
+                    Self.logger.info("HR source resolved via recent sample: source=\(source.name) device.hw=\(watchSample.device?.hardwareVersion ?? "?") device.model=\(watchSample.device?.model ?? "?")")
+                    continuation.resume(returning: source)
+                    return
+                }
+                let summary = quantitySamples.prefix(5).map { s -> String in
+                    let hw = s.device?.hardwareVersion ?? "?"
+                    let model = s.device?.model ?? "?"
+                    return "[hw=\(hw) model=\(model) source=\(s.sourceRevision.source.name)]"
+                }.joined(separator: " ")
+                Self.logger.info("HR source resolution: no watch-device sample found among \(quantitySamples.count) recent; first5=\(summary)")
+                continuation.resume(returning: nil)
+            }
+            self.healthStore.execute(query)
+        }
+    }
+
+    /// True when an HKDevice looks like an Apple Watch HR sensor. We check the
+    /// firmware-reported hardwareVersion ("Watch7,5", etc.) and model fields
+    /// independently, since their exact population varies across watchOS
+    /// versions. Either signal is sufficient.
+    private static func isWatchDevice(_ device: HKDevice?) -> Bool {
+        guard let device else { return false }
+        if let hw = device.hardwareVersion, hw.hasPrefix("Watch") {
+            return true
+        }
+        if let model = device.model, model == "Watch" {
+            return true
+        }
+        return false
+    }
+
+    private func stopHRAnchoredQuery() {
+        if let hrQuery {
+            healthStore.stop(hrQuery)
+            Self.logger.info("HR anchored query stopped")
+        }
+        hrQuery = nil
+    }
+
+    nonisolated private func deliverHRSamples(_ raw: [HKSample]?) {
+        guard let quantitySamples = raw as? [HKQuantitySample], !quantitySamples.isEmpty else { return }
+        // Process in chronological order so the algorithm's `evaluate(now:)`
+        // sees monotonically advancing timestamps within a batch.
+        let sorted = quantitySamples.sorted { $0.endDate < $1.endDate }
+        let bpmUnit = self.bpmUnit
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for sample in sorted {
+                let bpm = sample.quantity.doubleValue(for: bpmUnit)
+                self.sampleCount += 1
+                self.latestHeartRate = bpm
+                self.latestSampleDate = sample.endDate
+                self.onHeartRateSample?(sample)
+                self.onHeartRate?(bpm, sample.endDate)
+                Self.logger.info("HR sample t=\(sample.endDate.timeIntervalSince1970) bpm=\(bpm) uuid=\(sample.uuid.uuidString)")
+            }
+        }
+    }
+
+    private func deleteWorkout(_ workout: HKWorkout) async -> (success: Bool, error: Error?) {
+        await withCheckedContinuation { continuation in
+            healthStore.delete(workout) { success, error in
+                continuation.resume(returning: (success, error))
+            }
         }
     }
 
@@ -211,24 +389,10 @@ extension HeartRateMonitor: HKWorkoutSessionDelegate {
 extension HeartRateMonitor: HKLiveWorkoutBuilderDelegate {
     nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
                                     didCollectDataOf collectedTypes: Set<HKSampleType>) {
-        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-        guard collectedTypes.contains(heartRateType) else { return }
-        guard let stats = workoutBuilder.statistics(for: heartRateType),
-              let recent = stats.mostRecentQuantity() else { return }
-
-        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
-        let bpm = recent.doubleValue(for: bpmUnit)
-        let timestamp = stats.mostRecentQuantityDateInterval()?.end ?? Date()
-
-        Self.logger.info("HR sample t=\(timestamp.timeIntervalSince1970) bpm=\(bpm)")
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.sampleCount += 1
-            self.latestHeartRate = bpm
-            self.latestSampleDate = timestamp
-            self.onHeartRate?(bpm, timestamp)
-        }
+        // HR is now ingested via HKAnchoredObjectQuery in start(). The workout
+        // session is still required to keep the watch's HR sensor at the live
+        // sampling rate, but we no longer read HR from the builder's cached
+        // statistics — that path was the source of the timestamp collapse.
     }
 
     nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {

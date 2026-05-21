@@ -97,7 +97,7 @@ final class NapAlgorithm {
     private(set) var decisions: [Decision] = []
     var onDecision: ((Decision) -> Void)?
 
-    private var hrSamples: [(t: TimeInterval, bpm: Double)] = []
+    private let hrBuffer: HeartRateBuffer
     private var motionMagnitudes: [(t: TimeInterval, m: Double)] = []
 
     private var sessionStart: TimeInterval = 0
@@ -110,12 +110,17 @@ final class NapAlgorithm {
     private var stopped = false
     private var phase1MotionUnavailableLogged = false
 
+    init(hrBuffer: HeartRateBuffer) {
+        self.hrBuffer = hrBuffer
+    }
+
     func start(at date: Date) {
         sessionStart = date.timeIntervalSince1970
         phase = .settling
         decisions.removeAll()
-        hrSamples.removeAll()
         motionMagnitudes.removeAll()
+        // hrBuffer is reset by SessionRecorder.start() to keep the session
+        // lifecycle in one place. The algorithm reads the buffer directly.
         awakeReferenceHR = nil
         onsetTime = nil
         lightRefHR = nil
@@ -132,15 +137,13 @@ final class NapAlgorithm {
         Self.logger.info("NapAlgorithm stopped in phase=\(self.phase.rawValue) decisions=\(self.decisions.count)")
     }
 
-    nonisolated func ingestHR(bpm: Double, at date: Date) {
-        let t = date.timeIntervalSince1970
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard !self.stopped, self.phase != .wakeFired else { return }
-            self.hrSamples.append((t, bpm))
-            self.evictOldHR(now: t)
-            self.evaluate(now: t)
-        }
+    /// Called by SessionController on every fresh HR sample appended to the
+    /// shared HeartRateBuffer. Runs on MainActor synchronously with the
+    /// buffer append, so the algorithm's view of the buffer at evaluate time
+    /// matches exactly what the recorder will persist.
+    func onHRAppended(at t: TimeInterval) {
+        guard !stopped, phase != .wakeFired else { return }
+        evaluate(now: t)
     }
 
     nonisolated func ingestMotion(magnitude: Double, at date: Date) {
@@ -149,13 +152,6 @@ final class NapAlgorithm {
             guard let self else { return }
             guard !self.stopped, self.phase != .wakeFired else { return }
             self.motionMagnitudes.append((t, magnitude))
-        }
-    }
-
-    private func evictOldHR(now: TimeInterval) {
-        let cutoff = now - awakeReferenceWindowSec
-        if let firstFresh = hrSamples.firstIndex(where: { $0.t >= cutoff }), firstFresh > 0 {
-            hrSamples.removeFirst(firstFresh)
         }
     }
 
@@ -180,13 +176,13 @@ final class NapAlgorithm {
         guard (now - sessionStart) >= awakeReferenceWindowSec else { return }
 
         if awakeReferenceHR == nil {
-            let refWindow = hrSamples.filter { ($0.t - sessionStart) <= awakeReferenceWindowSec }
+            let refWindow = hrBuffer.entries.filter { ($0.t - sessionStart) <= awakeReferenceWindowSec }
             guard !refWindow.isEmpty else { return }
             awakeReferenceHR = median(refWindow.map { $0.bpm })
         }
         guard let awakeRef = awakeReferenceHR else { return }
 
-        let hrWindow = hrSamples.filter { (now - $0.t) <= settlingSustainSec }
+        let hrWindow = hrBuffer.entries.filter { (now - $0.t) <= settlingSustainSec }
         guard !hrWindow.isEmpty else { return }
         let avgHR = mean(hrWindow.map { $0.bpm })
 
@@ -220,7 +216,7 @@ final class NapAlgorithm {
         guard let onset = onsetTime else { return }
         guard (now - onset) >= lightReferenceWindowSec else { return }
 
-        let refWindow = hrSamples.filter { $0.t >= onset && $0.t <= (onset + lightReferenceWindowSec) }
+        let refWindow = hrBuffer.entries.filter { $0.t >= onset && $0.t <= (onset + lightReferenceWindowSec) }
         guard !refWindow.isEmpty else { return }
 
         let values = refWindow.map { $0.bpm }
@@ -239,7 +235,7 @@ final class NapAlgorithm {
     private func evaluateDeepening(now: TimeInterval) {
         guard let lightHR = lightRefHR else { return }
 
-        let window = hrSamples.filter { (now - $0.t) <= deepeningWindowSec }
+        let window = hrBuffer.entries.filter { (now - $0.t) <= deepeningWindowSec }
         guard !window.isEmpty else { return }
 
         let values = window.map { $0.bpm }
@@ -267,7 +263,7 @@ final class NapAlgorithm {
     private func evaluateConfirming(now: TimeInterval) {
         guard let lightHR = lightRefHR, let confirmStart = confirmingStart else { return }
 
-        let window = hrSamples.filter { (now - $0.t) <= deepeningWindowSec }
+        let window = hrBuffer.entries.filter { (now - $0.t) <= deepeningWindowSec }
         guard !window.isEmpty else { return }
 
         let values = window.map { $0.bpm }
