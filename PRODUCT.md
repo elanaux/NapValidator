@@ -1,6 +1,6 @@
 # Power Nap App — Product Document
 
-*Last updated: May 20, 2026*
+*Last updated: May 21, 2026*
 
 ---
 
@@ -10,19 +10,19 @@
 - Continuous HR + HR SD + motion monitoring drives wake decision; wake fires before Deep sleep entry; back-by time acts as scheduling fail-safe
 - HR-based stage detection validated against Apple Sleep stage labels (3 of 4 hypotheses confirmed overnight, with caveats; see Validation Findings)
 - Sampling: HKWorkoutSession in `.running` state with `.mindAndBody` activity type delivers ~12 HR samples/min and 5Hz motion
-- Layer A (NapAlgorithm.swift, v0.1.2, observe-only) and Layer B (SessionRecorder.swift) both shipped and integrated
+- Layer A (NapAlgorithm.swift, v0.2.0, observe-only) and Layer B (SessionRecorder.swift) both shipped and integrated, plus the shared HeartRateBuffer.swift (May 21)
 
 **Current build state:**
-- HR sample deduplication guard active (timestamp-based)
-- Pause-immediately removed; sessions run unpaused
-- Activity ring impact accepted as platform constraint (cannot be suppressed, will be disclosed)
-- Workout entry persisted in HealthKit (allows user audit of nap-attributed ring impact); active energy and exercise time remain on rings
-- Algorithm version 0.1.2 (logs motion-stall events when motion delivery throttles)
-- Algorithm remains observe-only until 5-10 clean sessions confirm parameter trustworthiness
+- **HR ingestion rewrite committed and validated May 21 (v0.2.0).** Replaces `mostRecentQuantity()` polling (which collapsed distinct HR samples onto shared timestamps) with: `HKAnchoredObjectQuery` ingestion, a single shared `HeartRateBuffer` feeding both algorithm and recorder, identity-based dedup (keyed on `HKQuantitySample.uuid`), and a watch-source filter. Validated across three on-device tests (see Validation Findings 8a). New file: `HeartRateBuffer.swift`.
+- **Pause-immediately re-enabled as ship mechanism, validated May 21.** Was removed, then rejection reversed, now confirmed: protects rings (Test 2: ~0 exercise minutes, negligible basal kcal) AND delivers clean ~12/min HR under pause. The ring constraint is beaten, not merely disclosed.
+- **Workout entry now deleted on stop (May 21 — reverses prior persist decision).** The persist-the-workout decision was made under the assumption that ring impact was unavoidable (the entry served as a user audit trail for ring credit). Paused mode eliminated the ring impact, so the entry became clutter rather than audit. Delete code re-added (workout-object only; energy/exercise samples are not third-party-deletable and are near-zero under pause). See 5b for the full reversal trail.
+- Algorithm version 0.2.0 (ingestion rewrite); motion-HR coupling hypothesis falsified May 21 — HR capture is independent of motion delivery (code-level confirmed).
+- Algorithm remains observe-only until 5-10 clean sessions confirm parameter trustworthiness.
 
-**Actively testing:**
-- Parameter tuning across nap sessions (n=1 clean session as of today; targeting 5-10 for confidence)
-- Deepening detection in real naps (Phase 2b/3 logic, currently observe-only)
+**Actively testing / immediate next:**
+- Multi-session accumulation of clean paused naps (toward 5-10 for parameter confidence; ingestion now produces clean data)
+- Deepening detection in real naps (Phase 2b/3 logic, observe-only)
+- **Shape-hypothesis analysis** — the original goal that the ingestion detour preempted; now unblocked (clean recovered overnight data exists, and the fixed capture path produces clean data going forward). See Open Questions.
 
 **Parked, not blocking:**
 - 5th outcome screen ("Restless/Interrupted") — waiting for 10+ sessions to reveal real patterns
@@ -30,14 +30,19 @@
 - Notification alert presentation issue (delivers silently, no haptic)
 - Back-by timer wiring and testing
 - Second-person testing logistics
+- Post-stop HealthKit drain (Step 2 — deferred; would write authoritative HR to a separate field as self-checking QA, never overwriting live capture, never feeding the algorithm)
 
 **Open architectural questions:**
+- **Bug B — overnight backgrounded sample loss (still open, not targeted by the May 21 fix).** Backgrounded sessions under Sleep Focus dropped ~77% of samples via the old delegate path. The anchored-query fix eliminates one failure mode (delegate batching) but does not itself enable background delivery — it relies on the workout session keeping the app alive. Untested under Sleep Focus. Lower priority: daytime naps (the product use case) run foregrounded/DND.
+- Whether motion is needed at all post-fix, or whether Phase 1 onset can run HR-only (would let motion collection be removed; validate HR-only onset before removing — motion is still an active term in the Phase 1 onset gate)
+- **Algorithm-shape hypothesis** (from research synthesis + clean-data reasoning): whether `t_var=0.8` is below the physiological HR-SD floor, whether the 60s sustain window is too short relative to CAP rhythm (20-40s), and whether the dual HR/SD AND-criterion is misaligned with asynchronous (HRV-leads) physiology. May indicate the trigger shape — not just parameter values — needs revision. Pending analysis on recovered clean data.
+- Watch-source filter resolution depends on a watch HR sample existing in the last hour (falls back to unfiltered otherwise); robust for the common case but see Platform Constraints for the edge.
 - Whether Light reference SD diagnostic threshold (1-3 bpm healthy range) is reliable across users
-- Whether the algorithm parameters tuned to current-user physiology generalize
-- Whether motion-stall events recur now that pause-immediately is removed
+- Whether algorithm parameters tuned to current-user physiology generalize
 
 **Strategic posture:**
 - Direct competitive comparison: PowNap (solo dev, minimal footprint, narrower product promise — HR-onset wake vs our Light→Deep deepening detection). Existence proof that HKWorkoutSession + disclosure pattern survives App Review.
+- **Potential differentiation — ring protection (HYPOTHESIS, not yet a confirmed claim).** PowNap and other HKWorkoutSession-based nap apps run unpaused and accept ring corruption, disclosing it to users. Paused mode (validated May 21) appears to deliver the same high-resolution HR *without* corrupting ring data. If durable, this is a real differentiator landing precisely on the optimizer/knowledge-worker buyer who also cares about Activity rings. **The likely edge is not the pause technique itself** (publicly documented; we got it from online resources) **but having debugged past the timestamp-collapse artifact that makes pause appear to break HR capture** — the same wrong conclusion we held May 17-19 and reversed May 21. **Open caveats before this becomes a public claim:** (1) n=1 ring validation; (2) durability unknown — whether Apple's pause-ring-suppression is intended-and-stable or incidental-and-closeable in a future watchOS; (3) unconfirmed *why* PowNap accepts the impact — did they hit the same apparent-breakage and give up (good for us), or reject pause for a downside we haven't found (a trap)? Validate via multi-session testing + Apple pause-behavior documentation before relying on it in positioning. Defer full treatment to the dedicated positioning session.
 - Not competing with: passive Apple Sleep data consumers (Pillow, AutoSleep, NapBot) — those apps cannot deliver real-time wake-at-moment behavior because Apple does not produce stage labels for naps.
 
 ---
@@ -156,6 +161,8 @@ Phase 2b's trigger uses two thresholds with different anchoring:
 
 The asymmetry is intentional. Deep sleep produces low absolute HR SD across users (a physiological constant), not low SD relative to that user's Light baseline. A relative SD threshold would produce unstable triggers for users with low Light baseline variability and would be vulnerable to contamination of the SD reference. Light reference SD's role is diagnostic (quality check on capture), not algorithmic (trigger input).
 
+> **Challenged May 21 (not yet resolved).** The "physiological constant" framing and the `t_var = 0.8 bpm` value are both questioned by the HR/HR-SD research synthesis (research/hr_and_hrsd_nrem_transitions.md), spot-checked against primary sources (Herzig 2017, Terzano CAP). Key points: (1) inferred N3 HR-SD in healthy adults is ~2.3 bpm, with a within-subject 95% lower bound near ~1.55 bpm — both well above 0.8, suggesting 0.8 may sit below the physiological floor and gate out legitimate Deep entries; (2) the absolute-SD-as-constant premise may not hold as stated in bpm. This is research-plus-reasoning, **not yet validated against this user's clean overnight data** — the shape-hypothesis analysis (pending, on recovered clean data) is what confirms or refutes it. Do not change `t_var` on the strength of the synthesis alone; validate first.
+
 ### Data recording (Layer B)
 
 Captures per session:
@@ -166,14 +173,78 @@ Captures per session:
 - Session boundaries with end cause
 - Battery levels at start and end
 - **Workout state transitions:** HKWorkoutSessionState changes (notStarted → running → paused → ended). Instrumentation to verify session behaves as designed and detect platform-level anomalies.
-- **Experiment audit:** Structured block per session capturing architecture invariants — `pausedImmediately` (should be false), `activeEnergyBurnedSampleCount`, `activeEnergyBurnedTotalKcal`, `appleExerciseTimeSampleCount`, `appleExerciseTimeTotalMinutes`. Ongoing validation that the architecture behaves as designed.
+- **Experiment audit:** Structured block per session capturing architecture invariants — `pausedImmediately` (now **true** in the adopted paused-mode architecture; was false during the May 17-19 unpaused interval), `activeEnergyBurnedSampleCount`, `activeEnergyBurnedTotalKcal`, `appleExerciseTimeSampleCount`, `appleExerciseTimeTotalMinutes`. Ongoing validation that the architecture behaves as designed.
+- **Build marker:** `buildMarker` field identifies which code version produced each session JSON (added May 21). Every session is self-identifying — analysis can confirm which build generated a dataset rather than assuming. *(Note: committed code currently carries a test-style marker string; consider setting a clean version marker for production.)*
 - Algorithm decisions (phase transitions, motion-stall events)
 - Immediate wake rating (Sharp/Fine/Groggy/Worse)
 - 3-hour follow-up rating
 
 Storage: One JSON per session, partial flushes every 30 seconds. Filename pattern: `YYYY-MM-DD_<8char>.json`.
 
-### Parameters (v0.1.2, placeholders, observe-only)
+### Component wiring & data flow (merged from ARCHITECTURE.md, May 21)
+
+*This subsection was previously a standalone `ARCHITECTURE.md`; merged here May 21 to keep one current-truth doc and corrected to the post-ingestion-rewrite architecture. The standalone file is archived.*
+
+**How a session runs.** `NapValidatorApp.init` bootstraps the `NotificationCoordinator` singleton, then renders `ContentView`, which constructs a `SessionController`. `SessionController.init` owns and wires three components — `HeartRateMonitor`, `SessionRecorder`, `NapAlgorithm` — plus a shared `HeartRateBuffer`. HR flows from the monitor's `HKAnchoredObjectQuery` into the shared buffer; the buffer feeds both the algorithm (Phase 1/2/3 evaluation) and the recorder (storage) from one source of truth. Motion samples from the recorder's `CMMotionManager` are forwarded to the algorithm as scalar magnitudes. Algorithm decisions flow back into the recorder. On **Start**, the controller starts the recorder (motion sampling + 30s partial-flush task), starts the algorithm, then awaits the monitor's async start (HK auth → `HKWorkoutSession` start → **immediate pause to suppress ring credits** → anchored query begins). On **Stop**, components halt in order; the recorder serializes the final JSON; the workout entry is **deleted from HealthKit** (after the audit reads energy/exercise); the UI flips to `.awaitingRating`; the wake rating mutates the file and schedules a 3-hour follow-up notification routed back through the coordinator.
+
+```mermaid
+flowchart TB
+    App["@main App"]
+    CV["ContentView"]
+    SC["SessionController"]
+    HR["HeartRateMonitor<br/>HKWorkoutSession + HKAnchoredObjectQuery"]
+    BUF["HeartRateBuffer<br/>(shared source of truth)"]
+    SR["SessionRecorder<br/>session JSON owner"]
+    NA["NapAlgorithm<br/>phase state machine"]
+    NC["NotificationCoordinator.shared"]
+    CMM["CMMotionManager"]
+
+    HK[("HealthKit")]
+    CM[("CoreMotion")]
+    UN[("UNUserNotificationCenter")]
+    FS[("Documents/&lt;date&gt;_&lt;uuid&gt;.json")]
+
+    App ==> CV
+    App ==> NC
+    CV ==> SC
+    SC ==> HR
+    SC ==> BUF
+    SC ==> SR
+    SC ==> NA
+    SR ==> CMM
+
+    HK -. "HR samples<br/>(HKAnchoredObjectQuery,<br/>watch-source filtered)" .-> HR
+    HK -. "workout state" .-> HR
+    CM -. "device motion (5Hz)" .-> CMM
+
+    HR -. "onHeartRateSample (identity dedup)" .-> BUF
+    BUF -. "shared entries" .-> NA
+    BUF -. "shared entries" .-> SR
+    CMM -. "motion magnitude" .-> SR
+    SR -. "motion magnitude" .-> NA
+    NA -. "onDecision (phase transitions)" .-> SR
+
+    SR -. "SessionFile JSON<br/>(partial 30s + final)" .-> FS
+    HR -. "delete workout on stop" .-> HK
+    SC -. "submitWakeRating" .-> FS
+    UN -. "follow-up response" .-> NC
+    NC -. "appendFollowupRating" .-> FS
+```
+
+**Files (current):**
+- **NapValidatorApp.swift** — `@main`; bootstraps `NotificationCoordinator.shared`, presents `ContentView`.
+- **ContentView.swift** — owns `SessionController` via `@State`; renders status / sample count / latest HR / start-stop; wake-rating sheet.
+- **SessionController.swift** — `@MainActor @Observable` orchestrator; owns the three components + shared `HeartRateBuffer`, wires callbacks, drives the Phase state machine, handles rating submission and follow-up scheduling.
+- **HeartRateMonitor.swift** — drives `HKWorkoutSession` + `HKLiveWorkoutBuilder` (`.other`), pauses immediately to suppress ring credits, runs the `HKAnchoredObjectQuery` for HR (watch-source filtered), forwards samples via `onHeartRateSample`, and on stop captures the workout, runs the ExperimentAudit, then **deletes the workout object** from HealthKit.
+- **HeartRateBuffer.swift** *(new May 21)* — `@MainActor` single source of truth for HR; append-only ordered `entries`, identity dedup on `HKQuantitySample.uuid`, `onAppend` hook driving algorithm evaluation.
+- **SessionRecorder.swift** — `@MainActor @Observable` session aggregator; owns `CMMotionManager`, event capture, partial-flush task, and the static write/mutate API; reads HR from the shared buffer (no longer maintains its own HR array).
+- **NapAlgorithm.swift** — `@MainActor @Observable` wake-trigger state machine (observe-only, v0.2.0); reads HR from the shared buffer, ingests motion magnitudes, emits `Decision` entries.
+- **NotificationCoordinator.swift** — `@MainActor` singleton; notification auth, the `FOLLOWUP_RATING` category, schedules and routes the 3-hour follow-up.
+
+
+### Parameters (v0.2.0, placeholders, observe-only)
+
+*Version note: v0.1.2 → v0.2.0 reflects the May 21 HR-ingestion rewrite (HKAnchoredObjectQuery, shared buffer, identity dedup, watch-source filter, workout-delete-on-stop). The algorithm **parameters** themselves are unchanged from v0.1.2 — the rewrite changed how HR is captured, not the phase logic or thresholds.*
 
 | Parameter | Value | Purpose |
 |---|---|---|
@@ -183,8 +254,8 @@ Storage: One JSON per session, partial flushes every 30 seconds. Filename patter
 | motion_threshold_rms | 0.005 | Motion ceiling for onset |
 | light_reference_window_s | 180 | Phase 2a capture window |
 | t_hr | 5 | HR drop threshold for deepening (relative to Light reference HR) |
-| t_var | 0.8 | HR SD threshold for deepening (absolute) |
-| d_sustain_s | 60 | Phase 2b → Phase 3 trigger duration |
+| t_var | 0.8 | HR SD threshold for deepening (absolute) — **flagged for revision; see Section 3 threshold-design note and the algorithm-shape hypothesis** |
+| d_sustain_s | 60 | Phase 2b → Phase 3 trigger duration — **flagged for revision (CAP-rhythm concern)** |
 | d_confirm_s | 30 | Phase 3 verification window |
 
 All parameters are placeholders based on n=1 data (May 15). Will be tuned as sessions accumulate. Algorithm flips out of observe-only mode when parameters are trusted across 5-10 sessions.
@@ -206,21 +277,27 @@ All parameters are placeholders based on n=1 data (May 15). Will be tuned as ses
 
 The product runs on watchOS, which imposes real constraints on what third-party apps can do. This section documents the constraints we operate under and the design decisions we've made in response.
 
-### Activity ring impact (load-bearing constraint)
+### Activity ring impact (constraint BEATEN via paused mode — validated May 21)
 
-**What we cannot do:** Prevent nap sessions from registering on the user's Activity rings.
+**Original constraint:** Prevent nap sessions from registering on the user's Activity rings — believed impossible.
 
-**Why:** Active high-resolution HR sampling on Apple Watch requires HKWorkoutSession. HKWorkoutSession in `.running` state generates `activeEnergyBurned` and `appleExerciseTime` samples that are owned by the system (`com.apple.health.*`), not by our app, even when our app initiated the workout. These samples count toward Move and Exercise rings.
+**Why it was believed unavoidable:** Active high-resolution HR sampling on Apple Watch requires HKWorkoutSession. HKWorkoutSession in `.running` state generates `activeEnergyBurned` and `appleExerciseTime` samples owned by the system (`com.apple.health.*`), counting toward Move and Exercise rings.
 
-We have empirically confirmed:
-- Sample generation cannot be suppressed during the active session
+Still-true sub-facts (these were never wrong):
+- During an *unpaused* session, sample generation cannot be suppressed
 - Post-session deletion of `activeEnergyBurned` samples does not cause ring totals to recompute downward
-- `appleExerciseTime` cannot be written or deleted by third-party apps at all (Apple platform restriction)
-- Activity type (`.mindAndBody` vs `.other`) does not change this behavior
-- Pause-immediately appears to suppress ring credit but breaks HR sample delivery 12-17x (see "Approaches we tested and rejected" below)
-- No alternative public API delivers ~12 samples/min HR without HKWorkoutSession (HKAnchoredObjectQuery, HKObserverQuery, WKExtendedRuntimeSession all gated by the same system-writer cadence of 1 sample / 3-7 min at rest)
+- `appleExerciseTime` cannot be written or deleted by third-party apps at all
+- Activity type (`.mindAndBody` vs `.other`) does not change this behavior (re-confirmed May 21: both gave credit unpaused)
 
-**What we ship instead:** Explicit disclosure of ring impact in App Store description and in-app onboarding. Workout entry is left in HealthKit (rather than auto-deleted) so users can audit and reconcile their actual numbers if they choose. This pattern is established by PowNap and accepts Apple App Review.
+> **Superseded May 21 (the two claims that made the constraint look unbeatable):**
+> - *"Pause-immediately breaks HR sample delivery 12-17x."* False. Pause captured 100% of samples by count (AB2FFBAD: 4,409, matching Apple Health). What broke was timestamp *fidelity* — the `mostRecentQuantity()` bug collapsed distinct samples onto shared timestamps. The "12-17x" was the post-collapse unique-timestamp count, misread as delivery loss.
+> - *"No public API delivers ~12/min without HKWorkoutSession; HKAnchoredObjectQuery gated to 1/3-7min."* Contradicted by our own data: Apple Health holds genuinely distinct HR at ~12/min. The "1/3-7min" describes *passive* (non-workout) sampling. HKAnchoredObjectQuery against the running workout is the basis for the May 21 ingestion fix.
+
+> **RESOLVED May 21 — the constraint is beaten.** Test 2 (17.7-min paused nap, validated build): ring impact dropped to **5.1 kcal active energy and 0 exercise minutes**, versus a ~103 kcal unpaused-equivalent (at ~5.8 kcal/min from Test 1). That is ~95% suppression of energy credit and 100% suppression of exercise-ring credit — the residual ~5 kcal is basal accrual in the brief pre-pause window, not app-attributable work. Combined with workout-entry deletion on stop (see 5b), a nap leaves no workout entry and negligible ring impact.
+>
+> **Caveats:** n=1 validation, daytime session. Durability across watchOS versions unconfirmed (is pause-suppression Apple-intended or incidental?). See Strategic posture (Section 1) for the differentiation hypothesis and what to validate before claiming it publicly.
+
+**What we ship now:** Paused-mode capture (rings protected) + workout-entry deletion on stop. The prior disclosure-and-accept posture is superseded — there is little ring impact left to disclose. *(If durability testing later shows pause-suppression is unreliable, the disclosure-and-accept fallback remains available, and PowNap precedent shows it survives App Review.)*
 
 ### Screen-on during active sessions
 
@@ -240,15 +317,44 @@ We have empirically confirmed:
 
 ### Motion delivery throttling (unverified)
 
-Original hypothesis was that watchOS throttles CMDeviceMotion delivery when the watch is still + screen off, independent of any pause behavior. This hypothesis predated our discovery that pause-immediately was the actual cause of motion suppression in earlier sessions. Whether stillness-throttling exists as an independent platform behavior in unpaused sessions has not yet been tested in real nap conditions (desk sessions yesterday were short and active, not lying still in a dark room).
+Original hypothesis was that watchOS throttles CMDeviceMotion delivery when the watch is still + screen off, independent of any pause behavior.
 
-**What we ship:** `phase1_motion_unavailable` logging in the algorithm decision trail (v0.1.2). If motion stalls occur in real naps, they will appear in the JSON as transitions in and out of unavailability. Architectural impact is contained because Phase 2b/3 are HR-only by design.
+> **Superseded May 21.** A May 20 working hypothesis held that pause-immediately *caused* motion suppression, and a further hypothesis held that throttled motion was *coupled to* HR capture corruption (motion-gated flush). A code read of SessionRecorder/HeartRateMonitor on May 21 falsified the coupling: HR and motion use independent buffers, independent callbacks, and independent appends; `ingestHeartRate` never reads motion state; there is no motion-gated HR write path. The observed correlation between HR duplicate-clusters and motion-present instants is consistent with HealthKit firing extra `didCollectDataOf` callbacks around motion events (an HK-side behavior), causing the app to re-pull a stale cached HR value — *not* with any app-level motion-HR coupling. Motion suppression and HR corruption are independent phenomena.
 
-### HR sample delivery quirk
+**What remains genuinely open:** whether stillness-throttling of motion exists as an independent platform behavior in unpaused sessions has still not been tested in real lying-still nap conditions. Separately, whether motion is needed at all post-fix is now a live question — motion's only remaining product role is the Phase 1 onset gate (HR-drop AND motion-RMS); if HR-only onset validates, motion collection could be removed entirely. Deferred to post-ingestion-fix architecture review; do not remove motion before validating HR-only Phase 1 onset against clean nap data.
 
-HKLiveWorkoutBuilder's `didCollectDataOf` callback fires on the builder's internal recompute cadence, not strictly when new HR samples arrive. The callback's value comes from `workoutBuilder.statistics(for:).mostRecentQuantity()`, which returns the latest sample available — potentially the same value repeatedly if no new sample has arrived.
+**What we ship:** `phase1_motion_unavailable` logging in the algorithm decision trail (v0.2.0). Architectural impact is contained because Phase 2b/3 are HR-only by design.
 
-**What we ship:** Timestamp-based deduplication guard in SessionRecorder (May 19) — incoming samples with timestamps matching the most recently written sample are discarded.
+### HR sample delivery quirk — root cause confirmed and FIXED May 21
+
+HKLiveWorkoutBuilder's `didCollectDataOf` callback fires on the builder's internal recompute cadence, not strictly when new HR samples arrive. The callback's value came from `workoutBuilder.statistics(for:).mostRecentQuantity()`, which returns the latest sample available — potentially the same value with the same timestamp repeatedly if no new sample has arrived. *(This passage predicted the mechanism correctly before it was fully diagnosed.)*
+
+**Full diagnosis (May 21):** This `mostRecentQuantity()` polling was the root cause of two distinct capture failures:
+- *Over-firing (paused / general):* when the delegate fires before a fresh reading exists, the app re-pulls the same value with the same timestamp, collapsing distinct samples onto shared timestamps (one session: 4,409 firings → 353 distinct timestamps, 92% collapse). Apple Health holds the same data at full distinct ~12/min resolution — proving the samples exist and only the app's ingestion lost the time axis. Sample *count* was never lost; timestamp *fidelity* was.
+- *Under-firing (backgrounded under Sleep Focus) — Bug B, still open:* the delegate appears to deliver fewer callbacks to a backgrounded app, and with no end-of-session reconciliation, those samples are permanently absent (May 20 overnight: 837 of ~3,600 captured, 23%). Inferred from app JSON; not cross-checked against Health. **Not addressed by the May 21 fix** — the anchored query eliminates the over-firing failure but does not itself solve background delivery. Lower priority: daytime naps run foregrounded/DND.
+
+Both traced to one root weakness: a single trust-the-delegate ingestion path with no reconciliation against the workout's authoritative sample store.
+
+**Why the SD calculation mattered:** the algorithm computes rolling HR SD by selecting samples by wall-clock timestamp. On a timestamp-collapsed session, duplicate-`t` samples are over-weighted in the window, distorting SD. Verified that the clean daytime nap (C924F838, 100% distinct timestamps) escaped this — its Light-ref SD of 0.68 (`light_ref_sd = 0.6773...`, stored in the session's algorithmDecisions) was computed over a 37-sample, 100%-distinct window and stands. But the corruption *would* propagate into the wake-decision SD on any corrupted session, which is why the fix protects the live algorithm, not just recorded data.
+
+**Fix committed and validated May 21 (v0.2.0):**
+1. **`HKAnchoredObjectQuery`** replaces `mostRecentQuantity()` polling — yields each fresh sample exactly once with its own true timestamp. (`HeartRateMonitor.workoutBuilder(_:didCollectDataOf:)` is now a no-op for HR; the stale-cache path is gone.)
+2. **Single shared `HeartRateBuffer`** feeds both algorithm and recorder — eliminates the prior two-independent-buffer divergence (see 5b). The algorithm's `evaluate()` and the recorder's `snapshot()` read the same entries; what the algorithm fired on is exactly what gets recorded.
+3. **Identity-based dedup** keyed on `HKQuantitySample.uuid` — replaces the consecutive-only timestamp guard (which let `T1,T2,T1,T2` duplicates through and would have destroyed recoverable samples if it had worked on collapsed data).
+4. **Watch-source filter** — scopes ingestion to the Apple Watch's HKSource so foreign HR sources (iPhone, paired Bluetooth HR devices) cannot contaminate the wake decision. See "HR source filtering" below.
+5. *(Step 2, deferred)* Post-stop HealthKit drain to a **separate** field — authoritative-HR reconciliation as self-checking QA, never overwriting live capture, never feeding the algorithm.
+
+**Validation (Tests 1-3, on-device May 21):** see Validation Findings 8a. Summary: clean distinct timestamps at ~12/min foreground (Test 1), clean and rings-protected under pause (Test 2), source filter engages and scopes to watch without starving (Test 3).
+
+**Superseded:** the prior "what we ship" was a timestamp-based dedup guard (May 19), consecutive-only and ineffective against non-consecutive duplicates. Replaced by the identity-based guard + anchored query above.
+
+### HR source filtering (new May 21)
+
+The anchored query observes the HealthKit store, which may contain HR from multiple sources (this developer's store has Apple Watch + iPhone + Bluetooth HR headphones). The unfiltered query would ingest any HR sample in the session window regardless of source — foreign data in the wake-decision path. The filter scopes ingestion to the watch.
+
+**Resolution method:** identify the watch source by querying recent HR samples (last hour) and matching on device type (`hardwareVersion.hasPrefix("Watch")` OR `model == "Watch"`), then filter to that sample's source. *Note: an earlier attempt matched on source-name string (`name.contains("Apple Watch")`) and failed — `matches=0` against a list that visibly included the watch — a brittleness that confirmed why name-string matching is unreliable. Device-type matching is robust where name matching is not.*
+
+**Known edge:** resolution depends on a watch HR sample existing in the last hour. If the watch has been off-wrist for an hour+ (e.g., a nap immediately after first putting the watch on), no watch sample is found and the filter falls back to **unfiltered** rather than starving the algorithm. Acceptable failure direction (unprotected > starved), and logged explicitly (`filter applied` vs `filter UNAVAILABLE, running unfiltered`).
 
 ### Apple Sleep tracking limitations
 
@@ -264,17 +370,19 @@ HKHeartbeatSeriesQuery does not fire during third-party workout sessions, confir
 
 Long-interval (3hr) local notifications scheduled from watchOS deliver silently to Notification Center without haptic alert or banner. The scheduling and delivery mechanism works end-to-end (60-second test fires correctly with alert); the presentation behavior fails for long intervals. Known issue, presentation diagnosis deferred until other priorities clear.
 
-### Approaches we tested and rejected
+### Approaches we tested, rejected, then re-adopted
 
-**Pause-immediately for ring suppression.** Some online resources recommend pausing HKWorkoutSession immediately after `beginCollection()` to suppress activity ring credit. We tested this on May 17 and ran it as production default through May 19. Findings:
+**Pause-immediately for ring suppression — REJECTED May 19, RE-ADOPTED (validated) May 21.**
 
-- Pause-immediately did appear to suppress activity ring credit
-- But it reduced HR sample delivery rate by 12-17x (from ~12/min to ~1 unique sample/min)
-- The duplication bug in SessionRecorder masked this — total sample count looked normal because the recorder wrote the same cached value repeatedly
-- The motion-throttling we attributed to Sleep Mode was actually caused by pause-immediately
-- Once removed, HR sampling and motion delivery both returned to expected rates
+Some online resources recommend pausing HKWorkoutSession immediately after `beginCollection()` to suppress activity ring credit. We tested this on May 17 and ran it as production default through May 19.
 
-**Do not retry pause-immediately as a ring-suppression mechanism.** It does not work as advertised. The cost (sample delivery loss) exceeds the benefit (ring suppression).
+> **Original conclusion (May 19, superseded):** "Pause-immediately reduced HR sample delivery 12-17x while only partially suppressing ring credit. Do not retry — the cost exceeds the benefit." Pause-immediately was removed (commit `ec90233`).
+>
+> **Why that was wrong (May 21):** The "12-17x reduction" was not a delivery loss. Paused sessions captured 100% of HR samples by count (AB2FFBAD: 4,409, matching Apple Health exactly). The apparent reduction was the *unique-timestamp count* after the `mostRecentQuantity()` bug collapsed distinct samples onto shared timestamps. We measured the artifact, attributed it to pause, and rejected pause on that basis. The motion suppression also attributed to pause is a separate, independent matter (see Motion delivery throttling).
+
+**Current status — ADOPTED and validated May 21 (Test 2):** Pause-immediately is the ship mechanism. It suppresses ring credit (validated: ~0 exercise minutes, ~5 kcal basal over a 17.7-min nap vs ~103 kcal unpaused-equivalent) and delivers clean ~12/min HR under pause via the anchored-query ingestion. The empirical unknown that gated adoption — whether `HKAnchoredObjectQuery` delivers continuous live updates against a *paused* workout session — was resolved affirmatively (Test 2: 11.82/min sustained under pause). Caveat: n=1, durability across watchOS versions unconfirmed.
+
+**Note on what this re-adoption depended on:** pause was only viable *because* the ingestion bug was fixed first. The technique is publicly known; the reason it appears not to work (and likely the reason competitors accept ring impact instead) is the timestamp-collapse artifact that makes pause look like it breaks HR capture. The edge is the debugging, not the technique.
 
 ---
 
@@ -298,13 +406,17 @@ This section documents decisions that are settled. Each entry includes reasoning
 | Decision | Reasoning |
 |---|---|
 | HR-only stage detection architecture | Beat-to-beat HRV unavailable to third-party workout sessions (May 14 finding). HR + HR SD validated as sufficient signal against Apple stage labels overnight (3 of 4 hypotheses confirmed, with caveats — see Validation Findings). |
-| Algorithm vs Recorder separation | Two parallel concerns kept structurally separate. Algorithm reads HR + motion, makes one decision (when to fire wake). Recorder captures full session data for analysis. Conflating creates fragility. |
-| Activity ring impact accepted, disclosed openly | See Platform Constraints for full detail. No public API delivers required HR sampling rate without ring impact. PowNap precedent demonstrates HKWorkoutSession + disclosure survives App Review. |
-| Pause-immediately rejected as ring-suppression mechanism | Empirically reduces HR delivery 12-17x while only partially suppressing ring credit. See Platform Constraints for full detail. |
+| Algorithm vs Recorder separation (revised May 21) | Algorithm and Recorder remain separate *concerns* — algorithm makes the wake decision, recorder persists full session data. As of the May 21 ingestion fix they read HR from a single shared `HeartRateBuffer` rather than two independent arrays. Prior design had each maintaining its own `hrSamples` populated by separate MainActor tasks, which could diverge by 1-2 boundary samples — meaning the SD the algorithm fired on was not exactly reconstructable from recorded data. Shared buffer eliminates that divergence. Separation of *responsibility* preserved; duplication of *the HR source* removed. |
+| Paused mode for ring protection — ADOPTED, validated May 21 | Pause-immediately was rejected May 19 (believed to break HR delivery 12-17x), then reversed May 21 once that was shown to be a timestamp-collapse artifact, not a delivery loss. Test 2 validated: paused mode suppresses ring credit to ~0 exercise minutes / negligible kcal AND delivers clean ~12/min HR under pause. Now the ship architecture. Caveat: n=1, durability across watchOS unconfirmed. See Platform Constraints → Activity ring impact. |
+| HR ingestion via HKAnchoredObjectQuery + shared buffer + identity dedup + watch-source filter | Replaces `mostRecentQuantity()` polling (timestamp-collapse root cause). Validated May 21 (Tests 1-3). See Platform Constraints → HR sample delivery quirk. |
 
-**Workout entry persists in HealthKit (not auto-deleted at session end).**
+**Workout entry deleted on stop (May 21 — REVERSES the prior persist decision).**
 
-Active energy and exercise time credits are unavoidable platform behavior — we've confirmed they cannot be deleted, written by us, or suppressed post-session. Given that ring impact is unavoidable and disclosed honestly, hiding the workout entry while not hiding the ring credits would be mixed-signal half-cleanup. Leaving the workout entry visible reinforces the honest-disclosure posture and gives technically-inclined users a way to audit and reconcile their actual numbers if they choose. Reversibility argument: if user feedback shows people want a cleaner Fitness app, deletion can be added later; reversing the other direction (un-deleting workouts users have come to expect) is harder.
+> **Decision history (Option B trail):**
+> - *Original (≤ May 20):* persist the workout entry in HealthKit, do not delete. Reasoning: ring impact was believed unavoidable, so leaving the workout entry visible gave users a place to attribute the ring credit they'd see — honest-disclosure posture. Deletion code was *removed* May 20 (commit `f97201f`) to align with this decision.
+> - *Reversed (May 21):* delete the workout entry on stop. Reasoning: paused mode (validated May 21) suppresses ring credit to near-zero, so there is no longer ring impact to attribute — a persisted 0-cal/0-min workout entry is clutter, not audit. The ring-attribution rationale that justified persisting dissolved when the ring problem was solved.
+
+Current behavior: on stop, after the ExperimentAudit reads energy/exercise data (ordering matters — audit before delete), the workout *object* is deleted from HealthKit. Note this is a *cleaner* implementation than the May-20-removed version: it deletes only the workout object, not the energy/exercise samples (which are not third-party-deletable and are near-zero under pause anyway). Validated May 21: workout briefly appears in Fitness then disappears; no persistent entry; audit data intact in the JSON.
 
 ---
 
@@ -407,19 +519,26 @@ The system "workout in progress" green pill cannot be suppressed and will be pre
 
 | Claim | Evidence |
 |---|---|
-| HKWorkoutSession in `.running` state delivers ~12 HR samples/min | May 13 spike test, May 15 nap, May 19 desk test all confirmed ~12 samples/min |
+| HKWorkoutSession in `.running` state delivers ~12 HR samples/min | May 13 spike test, May 15 nap, May 19 desk test all confirmed ~12 samples/min. **Strengthened May 21:** Apple Health holds genuinely distinct samples at ~12/min (5s median spacing, instantaneous) — confirmed real resolution, not a polling artifact. |
 | Motion delivers at 5Hz via CMDeviceMotion in unpaused sessions | May 15 nap, May 19 desk test |
 | heartbeatSeries does not fire during third-party workout sessions | May 14 finding, confirmed across multiple sessions |
 | Apple does not produce sleep stage labels for naps | May 18 finding, AsleepUnspecified only for daytime sessions |
-| Pause-immediately reduces HR sample delivery 12-17x | May 19 architectural diagnosis, comparing May 15 (running) vs May 17-19 (paused) |
-| Activity ring impact cannot be suppressed via deletion | May 19 empirical test confirmed energy samples are system-owned; appleExerciseTime cannot be written/deleted by third parties |
+| ~~Pause-immediately reduces HR sample delivery 12-17x~~ **FALSIFIED May 21** | Was: "May 19 architectural diagnosis, comparing May 15 (running) vs May 17-19 (paused)." Now known false — paused sessions captured 100% of samples (AB2FFBAD: 4,409, matching Health). The "12-17x" was the unique-timestamp count after the ingestion bug collapsed timestamps, not a delivery loss. See Platform Constraints → HR sample delivery quirk. |
+| Activity ring impact cannot be suppressed via deletion *(unpaused)* | May 19 empirical test confirmed energy samples are system-owned; appleExerciseTime cannot be written/deleted by third parties. *Deletion-suppression remains confirmed-impossible; but **pause-suppression works** — see the paused-mode rows below and Platform Constraints.* |
 | Layer A state machine executes correctly end-to-end | May 19 desk test fired phase transitions as designed |
+| HR ingestion via `mostRecentQuantity()` polling collapses distinct samples onto shared timestamps | **Confirmed May 21** via code read + Health cross-check. Root cause of the duplication bug. Fixed via HKAnchoredObjectQuery (validated below). |
+| **Anchored-query ingestion delivers clean distinct-timestamp HR (foreground)** | **Test 1 (May 21):** foreground daytime nap, validated build. 36 samples, 100% distinct timestamps, 0 duplicate clusters, 11.69/min, 9 distinct BPM values. The timestamp collapse (largest cluster 165 under the old path) is gone (largest cluster 1). |
+| **Anchored-query ingestion delivers clean HR under PAUSE, and pause protects rings** | **Test 2 (May 21):** 17.7-min paused nap. HR: 209 samples, 100% distinct, 0 clusters, 11.82/min sustained (resolves the "does the anchored query deliver live under pause" unknown — yes). Rings: 5.1 kcal / 0 exercise minutes vs ~103 kcal unpaused-equivalent (~95% energy / 100% exercise-ring suppression). Battery 0.85→0.80. |
+| **Watch-source filter engages and scopes to watch without starving** | **Test 3 (May 21):** filter resolved watch source among a 3-source HealthKit (watch + iPhone + Bluetooth headphones), applied, and delivered 30 samples / 100% distinct / 11.50/min — confirming it is correctly scoped, not over-restrictive. |
+| **Workout-entry deletion on stop works; audit preserved** | **May 21:** workout briefly appears in Fitness then is deleted; no persistent entry. ExperimentAudit reads energy/exercise *before* deletion (ordering confirmed in logs), so audit data remains intact in the JSON. |
+
+> **Validation scope caveat (applies to all May 21 rows above):** n=1 per condition, short daytime sessions (2.6–17.7 min). Sufficient to validate the *mechanism* (timestamp-collapse and filter behaviors appear per-sample and would show immediately). NOT validated: multi-session reliability, long naps, and backgrounded-overnight (Bug B, still open). Durability of pause-ring-suppression across watchOS versions also unconfirmed.
 
 ### 8b. Partially validated (needs re-validation with clean data)
 
 | Claim | Status |
 |---|---|
-| HR + HR SD carry sufficient signal to distinguish sleep stages | **Indicative only.** Overnight parallel-capture vs Apple Sleep stage labels (May 17-18) showed Deep, REM, and Core HR patterns directionally matching predicted physiology. However, the data was subject to the HR duplication bug — actual unique sample density was ~1/min, not the ~12/min the algorithm requires. Re-validation needed with clean data. |
+| HR + HR SD carry sufficient signal to distinguish sleep stages | **Indicative only.** Overnight parallel-capture vs Apple Sleep stage labels (May 17-18) showed Deep, REM, and Core HR patterns directionally matching predicted physiology. However, the app-captured data was subject to the timestamp-collapse ingestion bug — recorded unique-timestamp density was far below the ~12/min the algorithm requires. **Update May 21:** the full-resolution data exists in Apple Health and is recoverable (demonstrated: May 20 overnight reconstructed to 3,622 distinct samples at ~12/min from a Health export). Re-validation can run against Health-recovered data without needing to re-collect, once the shape-hypothesis analysis resumes. |
 
 ### 8c. Not yet validated / open questions
 
@@ -466,9 +585,9 @@ The system "workout in progress" green pill cannot be suppressed and will be pre
 - d_confirm_s reducing toward 0 (tune from real-session Phase 3 reversal data)
 - d_confirm_s reduction is coupled with false-positive rate. Reducing d_confirm_s decreases algorithm latency (good for sleep-debted users) but increases false positives from transient HR dips (bad). These are not independent tuning parameters — they are a single optimization with conflicting objectives that need joint consideration.
 - N3 onset acceleration in severely sleep-deprived users: extreme sleep debt can accelerate N3 onset below our minimum algorithm latency (~5.5 min from onset detection to wake decision). Affects edge-case users (severely sleep-deprived shift workers, etc.), not typical target users. Revisit if user feedback shows this population uses the product.
-- Literature review on HR and HR SD characteristics across NREM stages (specifically Light → Deep transition). Current thresholds (t_hr=5 bpm, t_var=0.8 bpm) are placeholders derived from n=1 nap data; published literature on stage-transition HR dynamics would inform whether these are conservative, aggressive, or appropriate. Suitable as a Code research task.
-- Arousal event handling: research indicates 3-4 brief arousals per nap is common (HR spikes without conscious wake). Phase 2b currently resets when conditions reverse, meaning frequent arousals could prevent deepening detection from ever firing. Open question whether this is correct behavior (arousals indicate user proximity to wake, no fire needed) or problematic (arousals occur within continuous N2 without indicating wake proximity).
-- HR vs HR SD temporal dynamics during Light → Deep transition: Phase 2b requires both conditions in lockstep (HR drop AND SD drop). Research gap on whether these fall asynchronously during real transitions; if SD stabilizes first followed by HR drop (or vice versa), our AND requirement could miss the actual transition window.
+- ~~Literature review on HR and HR SD characteristics across NREM stages~~ **DONE May 21** — `research/hr_and_hrsd_nrem_transitions.md`, spot-checked against primary sources (Herzig 2017, Terzano CAP). Findings folded into the algorithm-shape hypothesis (Section 1 Open Questions): `t_var=0.8` likely below physiological floor, 60s sustain short vs CAP rhythm, dual AND-criterion misaligned with HRV-leads-HR asynchrony. Pending validation against clean overnight data.
+- Arousal event handling: research indicates 3-4 brief arousals per nap is common (HR spikes without conscious wake). Phase 2b currently resets when conditions reverse, meaning frequent arousals could prevent deepening detection from ever firing. Open question whether this is correct behavior (arousals indicate user proximity to wake, no fire needed) or problematic (arousals occur within continuous N2 without indicating wake proximity). *(Connects to the shape hypothesis — CAP arousals every 20-40s within the 60s sustain window.)*
+- HR vs HR SD temporal dynamics during Light → Deep transition: Phase 2b requires both conditions in lockstep (HR drop AND SD drop). Research (May 21) now indicates these likely fall **asynchronously** (HRV/SD tends to lead HR-level into N3), so the simultaneous-AND requirement may miss the transition window. Part of the shape hypothesis; validate before changing.
 - Post-nap follow-up question design — unanchored phrasing that doesn't prime users
 - Follow-up timing methodology — what's the right interval? Currently arbitrary, needs grounding
 - Focus Recovery bar revisitable after N sessions of unanchored data showing meaningful pattern
@@ -479,9 +598,11 @@ The system "workout in progress" green pill cannot be suppressed and will be pre
 ### Engineering
 
 - Back-by timer wiring and testing
-- Workout entry deletion code removal (no longer needed; we leave workout entries in)
+- ~~Workout entry deletion code removal~~ **REVERSED May 21** — workout deletion was removed May 20 (persist decision), then *re-added* May 21 once paused mode eliminated the ring-attribution rationale. We now delete the workout on stop. See 5b.
 - Notification alert presentation fix (currently silent delivery for long intervals)
 - Old format JSON file migration cleanup
+- Set a clean production build-marker string (committed code currently carries a test-style marker)
+- `CLAUDE.md` at repo root with standing Code constraints (never deploy / build-to-compile only / build-with-review on product-spine code / never delete diagnostic data) — so Code inherits the boundaries without restating each task
 - Pilot feedback mechanism design
 
 ### Operations
