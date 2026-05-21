@@ -244,7 +244,7 @@ flowchart TB
 
 ### Parameters (v0.2.0, placeholders, observe-only)
 
-*Version note: v0.1.2 → v0.2.0 reflects the May 21 HR-ingestion rewrite (HKAnchoredObjectQuery, shared buffer, identity dedup, watch-source filter, workout-delete-on-stop). The algorithm **parameters** themselves are unchanged from v0.1.2 — the rewrite changed how HR is captured, not the phase logic or thresholds.*
+*Version note: v0.1.2 → v0.2.0 reflects the May 21 HR-ingestion rewrite (HKAnchoredObjectQuery, shared buffer, identity dedup, watch-source filter, workout-delete-on-stop). The algorithm **parameters** themselves are unchanged from v0.1.2 — the rewrite changed how HR is captured, not the phase logic or thresholds. **Note: the running code's `algorithmParameters.version` string still self-reports "0.1.2" as of session 8A5079FC — bump it to 0.2.0 as part of the build-marker/version cleanup so sessions self-identify correctly.**
 
 | Parameter | Value | Purpose |
 |---|---|---|
@@ -575,6 +575,10 @@ The deepening-trigger shape was tested against scored Deep in the two genuine la
 
 Plots: `q1_hr_sd_distribution.png`, `q2_deep_onset_overlay.png` (in analysis output dir).
 
+**Corroboration — real 62-min nap on the validated stack (8A5079FC, May 21).** First production-condition nap through the full fixed pipeline (anchored query + shared buffer + source filter + workout-delete + paused). Capture: clean (738 samples, 100% distinct, 11.91/min, rings 1.16 kcal / 0 exercise-min over the full hour — capture path validated in real nap conditions, not just short tests). Algorithm behavior: onset detected (+6.3 min) and light reference captured (light_ref_hr=58, **light_ref_sd=1.20**), then the **deepening trigger NEVER fired across the remaining ~58 minutes.** This independently reproduces the shape finding in *nap* conditions (not just overnights): the gate that detects ~25% of overnight Deep fired zero times in an hour-long nap. Also: the live light_ref_sd of 1.20 lands in the Core/light SD range measured from the overnights (~1.32 median), an independent cross-check that the overnight SD magnitudes are real, not a recovery/labeling artifact. So the evidence base for the shape problem is now 2 overnights + 1 nap, consistent across both contexts.
+
+**Second finding from the same nap — awake-reference capture window is mis-timed (NEW, distinct from the deepening-trigger problem).** The awake reference came out at **61 bpm**, implausibly low for an awake baseline. Root cause: the 180s awake-reference window starts at session Start, which is also when the user lies down — so the window captured the awake→asleep *transition* (HR fell 79→60 within the first 90s), not a stable awake baseline, and averaged the two to 61. The user's true awake/sitting HR is ~70-79 (visible in the first samples); settled HR ~57-60. Consequence: with the reference artificially low, the onset threshold (`awake_ref − 2`) is also low, so onset detection lagged — called at +6.3 min when the HR trajectory suggests sleep onset nearer minute 2-3. **This is the same *class* of problem as the deepening trigger:** the reference/trigger logic assumes a physiological pattern (a clean stable awake baseline; a clean SD separation) that the real data doesn't present. Suggests the *reference-capture architecture*, not just individual thresholds, needs rethinking. Caveat: n=1, deprived; fast settling (79→60 in 90s) may itself be deprivation-driven, so a rested user's window might read cleaner — the structural concern (window can straddle the transition) is real regardless; the severity needs rested data.
+
 ---
 
 ## 9. Open Questions / Parked Items
@@ -599,6 +603,7 @@ Plots: `q1_hr_sd_distribution.png`, `q2_deep_onset_overlay.png` (in analysis out
 ### Algorithm / data
 
 - **Trigger-shape redesign (NEW, top priority for algorithm work) — the current dual-AND-sustained shape was falsified May 21 (see 8d).** Candidate replacement shapes to investigate (all UNTESTED hypotheses, not commitments): median-over-window instead of strict-sustain; temporal hysteresis; reconsidering whether SD belongs in the gate at all given poor Deep/Core discrimination; whether a single better-discriminating feature beats the AND of two overlapping ones. **Gated on rested-physiology data before committing to any redesign** — designing on the n=2 deprived data would be design-before-validation.
+- **Awake-reference capture timing (NEW May 21, see 8d) — same reference-architecture thread.** The 180s awake-reference window starts at session Start = when the user lies down, so it captures the awake→asleep transition rather than a stable awake baseline (nap 8A5079FC: ref came out 61, true awake ~70-79, onset detection lagged as a result). Candidate fixes (untested): use an early-percentile/max of the window rather than the mean; detect onset via absolute HR/SD stability rather than relative-to-a-contaminated-reference; shift/shorten the window. Same caveat — n=1 deprived, fast settling may be state-driven.
 - Light reference SD as validity gate (decision between pre-capture stability gate vs capture-with-retry vs leaving diagnostic-only)
 - d_confirm_s reducing toward 0 (tune from real-session Phase 3 reversal data)
 - d_confirm_s reduction is coupled with false-positive rate. Reducing d_confirm_s decreases algorithm latency (good for sleep-debted users) but increases false positives from transient HR dips (bad). These are not independent tuning parameters — they are a single optimization with conflicting objectives that need joint consideration.
