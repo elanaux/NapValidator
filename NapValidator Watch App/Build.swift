@@ -10,5 +10,5 @@
 //
 
 enum Build {
-    static let marker = "anchored-query-watchsource-filtered-deleteworkout 2026-05-21"
+    static let marker = "v0.2.0 2026-05-21"
 }

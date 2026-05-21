@@ -64,9 +64,8 @@ final class NapAlgorithm {
         let d_confirm_s: Int
         let observeOnly: Bool
 
-        // v0.1.2: adds Phase 1 motion-stall decision logging (phase1_motion_unavailable / phase1_motion_resumed)
         static let current = Parameters(
-            version: "0.1.2",
+            version: "0.2.0",
             settling_to_asleep_hr_drop: 2.0,
             settling_to_asleep_sustain_s: 90,
             awake_reference_window_s: 180,
