@@ -38,3 +38,12 @@ fastlane/test_output/
 *~
 .idea/
 .vscode/
+
+# --- research/ evidence trail (BidSleep detector feasibility) ---
+# raw BidSleep dataset — large; re-fetchable via the tracked manifest
+research/bidsleep/Bidslab*/
+# python env / caches / compiled
+research/.venv/
+research/**/__pycache__/
+research/**/*.pyc
+research/.DS_Store
