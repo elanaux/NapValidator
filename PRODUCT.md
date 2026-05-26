@@ -1,6 +1,6 @@
 # Power Nap App — Product Document
 
-*Last updated: May 25, 2026*
+*Last updated: May 26, 2026*
 
 ---
 
@@ -50,6 +50,8 @@
 ## 2. Product Concept & Positioning
 
 > **Note:** This section reflects current working thinking and has not been deeply pressure-tested. A dedicated positioning work session is needed before locking naming, onboarding, pricing, or marketing copy. Inputs to that session should include: hands-on use of PowNap and other competitive apps, fresh-eyes critique of the current framing, and external research on knowledge-worker nap behavior. Do not treat the below as settled.
+>
+> **CLARIFY May 26 — the personalized-timer pivot this section describes is a CANDIDATE direction, not a validated product.** Last night's pivot language (here and in the Promise below) frames an onset-anchored personalized timer + ML onset-detection as *the* product. The May 26 mechanism-feasibility study (§10) characterized that mechanism — **buildable but modest** — and left the **build/no-build decision OPEN** pending field validation. Treat §2 as the candidate/vision direction the product is *pointed at*, not a settled product. The original framing is preserved as the trail; this note only recharacterizes its certainty. See **§10**.
 
 ### Promise
 
@@ -650,7 +652,52 @@ Across the 62 scorable naps, **first-N3 onset measured from sleep onset: median 
 
 ---
 
-## 10. Open Questions / Parked Items
+## 10. Product Mechanism Feasibility (May 26) — CHARACTERIZED, decision open
+
+**Question.** §9 closed the *detector* (Apple-Watch HR cannot detect the descent toward Deep, so no live wake-timing). This study asks the next question: is the **pivoted** product — an onset-anchored personalized countdown, with no live detection — actually viable, and at what cost? **Verdict: buildable but modest.** The mechanism works on the overnight-proxy data at a tolerable-looking failure rate, but the margin that buys safety also costs sleep, the residual failures land on a high-variance minority, and the numbers that decide go/no-go are nap-specific and unmeasurable offline. **Build/no-build is DECISION OPEN.**
+
+*Numbers below are pulled from the saved artifacts in `research/` (re-run May 26, deterministic): `onset_variance_results.md`, `early_tail_results.md`, `depth_sensitivity_results.md` and their `*_pull.py` / `.png` — not transcribed. Same BidSleep corpus and locked per-night alignment as §9; the within-subject frame is the 42 subjects with ≥2 N3 nights (163 nights).*
+
+### (a) Framing and verdict
+
+Stated above. The mechanism (b), the cost surface at an honest operating point (c), the named unknowns and why they are field-only (d), and the open decision plus the parked lever (e) follow.
+
+### (b) Mechanism — honest
+
+The product is an **onset-anchored countdown + per-user mean**: detect *sleep onset* from HR (the one thing §9 leaves standing — onset detection survives as the product spine), then fire a wake a fixed lead before the user's own historical mean onset→Deep latency. **There is NO real-time Deep detection** (impossible per §9). "Personalization" means tuning the *countdown length* from the user's own onset→Deep history — it is **history-fitting, not physiology**; the device never observes the current nap's descent.
+
+**Within-vs-across SD — the case FOR personalization (recorded so it is not re-fumbled):** the personalization-relevant number is the **within-subject** onset→Deep SD, **median ≈ 5.4 min** — the spread of a person's nights around *their own* mean, i.e. what a per-user timer actually has to track. The **across-population** onset→Deep SD is **≈ 8.5 min** (n = 166 nights; median onset→Deep ≈ 12 min); that is the variance a *population* timer fights, and it is **NOT** the personalization target. Personalized timing is worth it precisely because 5.4 < 8.5 — personalizing strips the between-person variance. Do not quote the 8.5 figure against the personalized mechanism; it is the bar the mechanism clears, not its error.
+
+### (c) Cost surface — at an honest operating point
+
+Model the countdown firing at `(personal_mean − margin)`; a **groggy wake (failure)** is a night whose actual onset→Deep beats the fire. At an honest operating point — **margin 4–6 min, thin tolerance D 1–2 min** — the overnight-proxy numbers are:
+
+- **Groggy-wake rate ≈ 10–15%** (grid cells: margin 4 / D 1 = 17.2%, 4 / D 2 = 14.7%, 6 / D 1 = 11.0%, 6 / D 2 = 9.2%).
+- **Failures are mostly SHALLOW** — median depth ≈ **3 min past N3 onset** (2.9–3.4 across margins), not deep into Deep.
+- **Nap sacrificed ≈ 5–8 min** (mean over non-failure nights: 6.3 at margin 4, 7.7 at margin 6).
+- **Failures concentrate in the high-variance minority** — the ~19% "hard-swinging" users (within-subject SD > 10 min; 8/42) produce **67% of residual failures at margin 4 / D 3**, vs a 23%-of-nights even-spread baseline.
+
+**CRITICAL methodological note (recorded so the two knobs are never conflated):** **MARGIN is the real lever** — firing earlier produces genuine *before-Deep* catches, and it costs sleep (that is the honest trade). **Acceptable-depth tolerance D is a GOALPOST knob** — it does not change when the countdown fires; it merely *relabels* shallow in-Deep wakes as "acceptable." At low margin a wide D flatters the read badly: at margin 0 / D 5, **44% of the "successes" are actually shallow-Deep landings** inside the tolerance band, not before-Deep catches. (Anchor check: the D = 0 column reproduces the prior run's failure rates exactly — 53.4 / 37.4 / 22.7 / 14.7% at margins 0/2/4/6.) **Defensible operating points lean on margin, not on widening D.**
+
+### (d) Unknowns — named, and the meta-point
+
+Three unknowns sit directly on the go/no-go decision, and **all three are nap-specific and unmeasurable offline:**
+
+1. **Nap-vs-overnight transfer.** Every number here is from **overnight** EEG (BidSleep). Naps have different sleep pressure/architecture; the transfer gap is **structural and cannot be measured from the offline corpus** (we have no nap EEG).
+2. **Does ~3-min-into-Deep actually feel groggy?** The whole cost surface assumes a depth→grogginess relationship, but **no dose-response curve exists** — we do not know whether a 3-min-into-Deep wake is meaningfully worse than a before-Deep wake.
+3. **Real-nap failure rate is plausibly WORSE than this overnight proxy.** Naps self-select for sleep-deprived states that pull Deep **earlier** and make onset→Deep **more variable** — both push the early-tail (and the failure rate) up relative to these rested-overnight numbers. (The personal_mean here is also in-sample; a deployed per-user mean would not include the night it scores, nudging the real rate up further.)
+
+**Meta-point: the offline data well is dry.** All three are answerable **only by shipping and reading field wake-ratings** (Groggy/Fine/Sharp) on real naps. No further offline analysis on BidSleep or on our own label-poor naps moves these — validation now moves to the field.
+
+### (e) Status and the parked lever
+
+**Build/no-build is OPEN**, deferred pending reflection. The open strategic question is not "does the mechanism work" (it does, modestly) but **"is the modest-but-real product worth building, and is it wanted over a dumb fixed-duration timer — claimed honestly?"** The honest claim is *anchored-to-your-real-onset, lighter-sleep wake most of the time* — explicitly **NOT precision** (that promise died in §9).
+
+**Parked design lever:** the failure concentration in (c) cuts both ways — the product may be able to **self-identify high-variance, bad-fit users from their early naps** (their within-subject swing surfaces fast) and **under-promise to them** specifically, protecting trust rather than silently handing them the worst experience. Parked, not designed.
+
+---
+
+## 11. Open Questions / Parked Items
 
 ### Product design
 
@@ -743,7 +790,7 @@ Across the 62 scorable naps, **first-N3 onset measured from sleep onset: median 
 
 ---
 
-## 11. Research Foundation
+## 12. Research Foundation
 
 The science underlying the product approach. Claims here are calibrated to what current research actually supports — not to what would be most flattering to the product story.
 
