@@ -30,6 +30,6 @@ Don't let satisfying cleanup crowd out the hard decision.
 
 ## Status as of May 26 eve
 - Detector: CLOSED (§9, not viable). Product pivot reframed as VISION, not validated product.
-- §9 detector study + earlier build thread are committed. §10 mechanism study + the 3 May-26
-  research files (onset_variance / early_tail / depth_sensitivity) are EDITED but the commit
-  was left pending confirmation — NOT yet committed. Nothing pushed to a remote yet.
+- §9 detector study + earlier build thread committed. §10 mechanism study + the 3 May-26
+  research files (onset_variance / early_tail / depth_sensitivity) committed `0900f41`;
+  this TODO committed `62aa732`. Nothing pushed to a remote yet.
