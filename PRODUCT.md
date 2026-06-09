@@ -1,10 +1,14 @@
 # Power Nap App — Product Document
 
-*Last updated: May 26, 2026*
+*Last updated: May 27, 2026*
+
+> **Project concluded May 27, 2026 — see README for the summary. This document is the working engineering record preserved as the project's evidence trail.**
 
 ---
 
 ## 1. Current State
+
+> *This section captures the project's in-flight status as it stood at conclusion (May 27, 2026). The investigation has since closed; see §9, §10, and README for the resolution.*
 
 **Architecture (validated):**
 - Continuous HR + HR SD + motion monitoring drives wake decision; wake fires before Deep sleep entry; back-by time acts as scheduling fail-safe
@@ -49,7 +53,7 @@
 
 ## 2. Product Concept & Positioning
 
-> **Note:** This section reflects current working thinking and has not been deeply pressure-tested. A dedicated positioning work session is needed before locking naming, onboarding, pricing, or marketing copy. Inputs to that session should include: hands-on use of PowNap and other competitive apps, fresh-eyes critique of the current framing, and external research on knowledge-worker nap behavior. Do not treat the below as settled.
+> **Note (historical):** This section reflects working thinking that was never deeply pressure-tested. The positioning work — promise framing, naming, onboarding, pricing, competitive comparison — was overtaken by the no-build decision (§10) before it became necessary. It stands as the candidate direction the product was pointed at, not settled product thinking. See §10 / README for the resolution.
 >
 > **CLARIFY May 26 — the personalized-timer pivot this section describes is a CANDIDATE direction, not a validated product.** Last night's pivot language (here and in the Promise below) frames an onset-anchored personalized timer + ML onset-detection as *the* product. The May 26 mechanism-feasibility study (§10) characterized that mechanism — **buildable but modest** — and left the **build/no-build decision OPEN** pending field validation. Treat §2 as the candidate/vision direction the product is *pointed at*, not a settled product. The original framing is preserved as the trail; this note only recharacterizes its certainty. See **§10**.
 
@@ -184,7 +188,7 @@ Captures per session:
 - Battery levels at start and end
 - **Workout state transitions:** HKWorkoutSessionState changes (notStarted → running → paused → ended). Instrumentation to verify session behaves as designed and detect platform-level anomalies.
 - **Experiment audit:** Structured block per session capturing architecture invariants — `pausedImmediately` (now **true** in the adopted paused-mode architecture; was false during the May 17-19 unpaused interval), `activeEnergyBurnedSampleCount`, `activeEnergyBurnedTotalKcal`, `appleExerciseTimeSampleCount`, `appleExerciseTimeTotalMinutes`. Ongoing validation that the architecture behaves as designed.
-- **Build marker:** `buildMarker` field identifies which code version produced each session JSON (added May 21). Every session is self-identifying — analysis can confirm which build generated a dataset rather than assuming. *(Note: committed code currently carries a test-style marker string; consider setting a clean version marker for production.)*
+- **Build marker:** `buildMarker` field identifies which code version produced each session JSON (added May 21). Every session is self-identifying — analysis can confirm which build generated a dataset rather than assuming. *(Production marker set to `v0.2.0 2026-05-21` on May 21 — see §11 Engineering.)*
 - Algorithm decisions (phase transitions, motion-stall events)
 - Immediate wake rating (Sharp/Fine/Groggy/Worse)
 - 3-hour follow-up rating
@@ -652,15 +656,15 @@ Across the 62 scorable naps, **first-N3 onset measured from sleep onset: median 
 
 ---
 
-## 10. Product Mechanism Feasibility (May 26) — CHARACTERIZED, decision open
+## 10. Product Mechanism Feasibility (May 26) — CHARACTERIZED — DECISION: NO BUILD (May 27, 2026)
 
-**Question.** §9 closed the *detector* (Apple-Watch HR cannot detect the descent toward Deep, so no live wake-timing). This study asks the next question: is the **pivoted** product — an onset-anchored personalized countdown, with no live detection — actually viable, and at what cost? **Verdict: buildable but modest.** The mechanism works on the overnight-proxy data at a tolerable-looking failure rate, but the margin that buys safety also costs sleep, the residual failures land on a high-variance minority, and the numbers that decide go/no-go are nap-specific and unmeasurable offline. **Build/no-build is DECISION OPEN.**
+**Question.** §9 closed the *detector* (Apple-Watch HR cannot detect the descent toward Deep, so no live wake-timing). This study asks the next question: is the **pivoted** product — an onset-anchored personalized countdown, with no live detection — actually viable, and at what cost? **Verdict: buildable but modest.** The mechanism works on the overnight-proxy data at a tolerable-looking failure rate, but the margin that buys safety also costs sleep, the residual failures land on a high-variance minority, and the numbers that decide go/no-go are nap-specific and unmeasurable offline. **Build/no-build — DECISION: NO BUILD (May 27, 2026; see (e)).**
 
 *Numbers below are pulled from the saved artifacts in `research/` (re-run May 26, deterministic): `onset_variance_results.md`, `early_tail_results.md`, `depth_sensitivity_results.md` and their `*_pull.py` / `.png` — not transcribed. Same BidSleep corpus and locked per-night alignment as §9; the within-subject frame is the 42 subjects with ≥2 N3 nights (163 nights).*
 
 ### (a) Framing and verdict
 
-Stated above. The mechanism (b), the cost surface at an honest operating point (c), the named unknowns and why they are field-only (d), and the open decision plus the parked lever (e) follow.
+Stated above. The mechanism (b), the cost surface at an honest operating point (c), the named unknowns and why they are field-only (d), and the decision plus the parked lever (e) follow.
 
 ### (b) Mechanism — honest
 
@@ -691,13 +695,17 @@ Three unknowns sit directly on the go/no-go decision, and **all three are nap-sp
 
 ### (e) Status and the parked lever
 
-**Build/no-build is OPEN**, deferred pending reflection. The open strategic question is not "does the mechanism work" (it does, modestly) but **"is the modest-but-real product worth building, and is it wanted over a dumb fixed-duration timer — claimed honestly?"** The honest claim is *anchored-to-your-real-onset, lighter-sleep wake most of the time* — explicitly **NOT precision** (that promise died in §9).
+> **DECISION May 27, 2026 — NO BUILD.** The honest version of the product would wake the user at the wrong time often enough to matter and wouldn't do much that a simple timer couldn't — failing the standard of being a product I would be excited to use. See README for the full reasoning.
+
+The strategic question this resolved was not "does the mechanism work" (it does, modestly) but **"is the modest-but-real product worth building, and is it wanted over a dumb fixed-duration timer — claimed honestly?"** The honest claim is *anchored-to-your-real-onset, lighter-sleep wake most of the time* — explicitly **NOT precision** (that promise died in §9).
 
 **Parked design lever:** the failure concentration in (c) cuts both ways — the product may be able to **self-identify high-variance, bad-fit users from their early naps** (their within-subject swing surfaces fast) and **under-promise to them** specifically, protecting trust rather than silently handing them the worst experience. Parked, not designed.
 
 ---
 
 ## 11. Open Questions / Parked Items
+
+> *Open-questions backlog as it stood at conclusion. These items are preserved as the investigation's working state; the no-build verdict (§10) means they are not being pursued.*
 
 ### Product design
 
@@ -785,7 +793,7 @@ Three unknowns sit directly on the go/no-go decision, and **all three are nap-sp
 ### Strategic / business
 
 - Pricing & business model strategy session (60-90 min, fresh head)
-- WWDC Code project (June 6-7, weekend before WWDC)
+- ~~WWDC Code project (June 6-7, weekend before WWDC)~~ **NOT PURSUED — project concluded May 27, 2026 (§10) ahead of the WWDC window.**
 - Cross-platform expansion (Wear OS, Oura, WHOOP integrations) — long-term
 
 ---
