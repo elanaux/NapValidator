@@ -51,3 +51,4 @@ research/.DS_Store
 # --- research/gate2_rr/ (Gate 2, CAP) ---
 # raw PhysioNet CAP files / headers — re-fetchable, do not commit
 research/gate2_rr/cap_raw/
+research/gate2_rr/cap_derived/

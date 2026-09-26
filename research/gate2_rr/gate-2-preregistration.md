@@ -113,4 +113,9 @@ The CAP baseline arm (logreg, all-N3, avg over read-L) is expected near BidSleep
 
 *Added caveat:* RBD, PLM and narcolepsy (36 of 105 usable subjects) alter autonomic function and HRV directly. That affects the RR features specifically, not just sleep depth. The CAP verdict remains directional; MESA decides.
 
+**2026-09-26 — Amendment 5, made before any ECG signal was downloaded or processed.** Two ingestion rules turned out to be under-specified or inconsistent while the ingestion code was being written:
+- **Ectopic rule made causal.** The original rule ("> 20 % from the median of the *surrounding* 11 RR") uses up to ~5 future beats, which contradicts the pre-registered causality requirement ("features must be causal … no future leakage"). Causality takes precedence. **Revised:** drop an RR that deviates > 20 % from the median of the **preceding 11** in-range RR, which is also what a real-time device could compute. It applies identically to both arms.
+- **Exclusion basis made explicit.** "> 20 % of beats removed" is computed over the **scored window** (the span that produces decision points), because some recordings extend hours outside scoring (up to 15 h) with electrode-off stretches that don't enter the analysis. The whole-recording % is reported alongside.
+- **Implementation notes** (not rule changes): EDFs are streamed and only the ECG channel is kept (the full files total ~42 GB and the disk can't hold them). The stage codes match the harness: W 0, S1 1, S2 2, S3|S4 3, REM 4, MT/unscored/hypnogram gaps 5 (UNKNOWN). The 5 s grid is anchored at the EDF start.
+
 *(any further pre-treatment amendment is dated and justified here)*
