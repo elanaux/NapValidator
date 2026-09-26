@@ -82,7 +82,7 @@ The CAP baseline arm (logreg, all-N3, avg over read-L) is expected near BidSleep
 ## What a result can and can't mean (stated before the result)
 
 - **ECG-derived RR is an upper bound** on wrist PPG. PPG inter-beat intervals are noisier, motion-sensitive, and (per §9 pass 6) not streamable to third parties on Apple Watch today. A PASS says the information exists in the heartbeat. It does not say a watch app can get it.
-- **CAP is small and mostly pathological** (NFLE, RBD, PLM, insomnia, etc.; healthy controls a minority). The pathology mix is characterised in Step 1. Pathology can shift both HRV and N3 architecture.
+- **CAP is small and mostly pathological** (NFLE, RBD, PLM, insomnia, etc.; healthy controls a minority). The pathology mix is characterised in Step 1. Pathology can shift both HRV and N3 architecture. In particular, RBD, PLM and narcolepsy (36/105 usable subjects) alter autonomic function and HRV directly, which affects the RR features specifically, not just sleep depth (Amendment 4). The CAP verdict remains directional; MESA decides.
 - **Overnight, not naps**, same as BidSleep.
 - A **FAIL** on this upper-bound signal would strengthen §9's conclusion: if clean ECG RR can't move the needle, wrist PPG won't.
 
@@ -92,5 +92,25 @@ The CAP baseline arm (logreg, all-N3, avg over read-L) is expected near BidSleep
 1. Verdict semantics: PASS = "RR carries signal beyond averaged HR → proceed to MESA", explicitly not a usefulness claim; the usefulness bar is to be pre-registered separately before MESA access.
 2. Added the RF paired-lift arm with the same bar; RF-only success → "INCONCLUSIVE — nonlinear signal", routes to MESA, not a pass.
 3. Added the note that the +0.02 floor is BidSleep-calibrated, the CAP verdict is directional, MESA decides, and the usable CAP subject count is recorded with the verdict.
+
+**2026-09-26 — Amendment 4, made after Step 1 fit-verification (metadata only: EDF headers + hypnograms; no ECG signal ingested, no features or AUROC computed).** Evidence in `fit_verify_cap.py` / `cap_fit_table.csv`.
+
+*Record exclusions (108 → 105 usable before the beat-removal rule):*
+- `n16`: no ECG channel.
+- `rbd11`: byte-identical EDF to `rbd10` (same SHA256 in PhysioNet `SHA256SUMS.txt`; the demographics sheet also lists identical sex and age). One recording, so keeping both would leak one night across folds. `rbd10` is kept.
+- `nfle27`: clock contradiction. The hypnogram starts at 22:08:16, 48 min **before** the EDF start (22:56:40). Alignment can't be trusted.
+
+*Alignment rule:* CAP hypnogram and EDF share one clock (in 86/108 records the scoring ends within ~5 min of the EDF end, median 0 s). Epochs are placed by clock time relative to the EDF start, rolling past midnight. No per-night offset search (unlike BidSleep). **Epochs falling wholly or partly outside the recording are trimmed** (18–138 s overruns in ~20 records). For `n13`/`n14` (EDF header `n_records = -1`) the duration is taken from file size.
+
+*ECG channel:* the ECG/EKG-labelled channel. Where ECG1 and ECG2 are stored separately (`nfle25`, `nfle33`), the lead is ECG1 − ECG2.
+
+*Sampling rate (Option A):* all usable records are kept regardless of ECG sampling rate. 20 records are at 100–128 Hz, where R-peak timing is quantised to 8–10 ms; R-peak times are refined by **parabolic interpolation** on the cleaned ECG for all records.
+- **The primary verdict is computed on all usable subjects** (105 before the > 20 % beat-removal exclusion; the post-exclusion count is recorded at ingestion).
+- **≥ 200 Hz sensitivity rerun (non-gating):** the full protocol re-run on the subset of usable subjects whose ECG is ≥ 200 Hz, with its own `GroupKFold(5)`. Its role:
+  - If the subset's LR lift meets the PASS bar (mean Δ ≥ +0.04 **and** Δₖ > 0 in all 5 subset folds) while the primary verdict is FAIL or INCONCLUSIVE, the verdict becomes **"INCONCLUSIVE — possible sampling-rate attenuation"**, which routes to MESA.
+  - It can **never** produce a PASS, and it **cannot** downgrade a primary PASS.
+  - The subset lift is reported alongside the primary whatever the outcome.
+
+*Added caveat:* RBD, PLM and narcolepsy (36 of 105 usable subjects) alter autonomic function and HRV directly. That affects the RR features specifically, not just sleep depth. The CAP verdict remains directional; MESA decides.
 
 *(any further pre-treatment amendment is dated and justified here)*
