@@ -61,12 +61,18 @@ Spectral features: NN series cubic-interpolated to 4 Hz, then Welch PSD (Hann, 1
 | **Clear FAIL** | mean Δ < **+0.02**, **OR** Δₖ ≤ 0 in **≥ 2** of 5 folds |
 | **INCONCLUSIVE** | anything else (e.g. mean Δ in [0.02, 0.04) with ≤ 1 non-positive fold, or mean ≥ 0.04 with exactly one non-positive fold) — reported as inconclusive and not rounded to either side |
 
+**What PASS means (Amendment 1).** PASS means **"RR carries lead-time signal beyond averaged HR → proceed to MESA."** PASS is **NOT a usefulness claim.** The lift is the only gate; there is no absolute-AUROC requirement. The absolute usefulness bar will be pre-registered separately, **before MESA data is accessed**. Absolute AUROC is still reported here, as non-gating.
+
+**RF paired-lift arm (Amendment 2).** LR remains the gate. RF lift Δᴿᶠₖ = AUROC_RF-treatment,k − AUROC_RF-baseline,k is computed on the same folds and scored against the same bar (mean ≥ +0.04 **and** Δᴿᶠₖ > 0 in all 5 folds). **If RF meets that bar and LR does not, the verdict is "INCONCLUSIVE — nonlinear signal."** That verdict routes to MESA and is **not** a pass. If LR passes, the verdict is PASS regardless of RF (RF reported).
+
+**Noise floor and sample size (Amendment 3).** The +0.02 noise floor was calibrated on BidSleep (45 usable subjects of 47). CAP is smaller and differently composed, so **the CAP verdict is directional by construction; MESA is the deciding run.** The usable CAP subject count from Step 1 is recorded next to the verdict when it is reported.
+
 **Why these numbers.** Pass 2's bar (mean ≥ 0.65) sat **+0.04** above the 0.61 ceiling; that distance was the pre-registered definition of "climbing toward useful", so +0.04 is the same bar expressed as a lift. The "every fold improves" clause is the paired analogue of pass 2's per-fold-min clause: the lift must be consistent across held-out subject groups, not carried by one fold. The +0.02 fail line is roughly the size of the RF-vs-logreg differences seen throughout §9 (0.01–0.02), i.e. noise-scale on this harness.
 
 **Reported, not gating:**
 - Per-read-L Δ (15/30/60/90) and per-fold AUROC for both arms; AUPRC and prevalence.
 - first-N3-only, both arms (informational, as in §9).
-- **RF on both arms. Does the signal-limited pattern persist?** The pattern is judged **broken** if on the treatment arm RF − logreg ≥ **+0.03** (mean over folds) with RF ahead in ≥ 4 of 5 folds. Otherwise it **persists**. A result where RF passes the bar and logreg doesn't is reported as "not a pass; nonlinear signal flagged", and the gate stays on logreg.
+- **RF on both arms. Does the signal-limited pattern persist?** The pattern is judged **broken** if on the treatment arm RF − logreg ≥ **+0.03** (mean over folds) with RF ahead in ≥ 4 of 5 folds. Otherwise it **persists**. (Reported only. The RF *lift* arm above is what can produce "INCONCLUSIVE — nonlinear signal".)
 - The treatment arm's absolute AUROC against the original 0.65 / 0.60 bar. This is informational only, because it crosses datasets.
 
 ## Comparability stop (Step 3)
@@ -82,4 +88,9 @@ The CAP baseline arm (logreg, all-N3, avg over read-L) is expected near BidSleep
 
 ## Amendments
 
-*(none — any pre-treatment amendment is dated and justified here)*
+**2026-09-26 — Amendments 1–3, made before Step 1 (no CAP data downloaded or seen).** At the owner's review of the initial pre-registration:
+1. Verdict semantics: PASS = "RR carries signal beyond averaged HR → proceed to MESA", explicitly not a usefulness claim; the usefulness bar is to be pre-registered separately before MESA access.
+2. Added the RF paired-lift arm with the same bar; RF-only success → "INCONCLUSIVE — nonlinear signal", routes to MESA, not a pass.
+3. Added the note that the +0.02 floor is BidSleep-calibrated, the CAP verdict is directional, MESA decides, and the usable CAP subject count is recorded with the verdict.
+
+*(any further pre-treatment amendment is dated and justified here)*
