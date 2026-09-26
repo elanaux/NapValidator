@@ -58,12 +58,29 @@ The LR lift is flat across L (+0.023 to +0.025). Like the baseline, it isn't a s
 - **Overnight data, not naps.**
 - The 5 s HR is a regular grid; BidSleep's Apple Watch HR is irregular (2–9 s). Accepted mismatch.
 
-## 6. Carry forward to the MESA pre-registration (not acted on)
+## 6. Routing decision — POST-HOC (owner, 2026-09-26; not a pre-registration amendment)
+
+The verdict stands as **INCONCLUSIVE**, reported as pre-registered. The pre-registration didn't specify where a plain INCONCLUSIVE routes, so the owner made the routing call after seeing the results, and it is recorded here as post-hoc. **Decision: do NOT proceed to MESA. Gate 2 is closed.** Rationale:
+- The treatment LR (0.655) is below the baseline RF on averaged HR alone (0.666). RR adds little beyond what a nonlinear model already extracts from 5 s HR.
+- The RR lift is concurrent-state (L = 0: 0.705 → 0.767), not lead-time (flat +0.023 to +0.025 across L = 15–90 s).
+- ECG-derived RR is an upper bound on wrist PPG, so any real-device lift would be smaller.
+- Gate 1 (real-time beat-to-beat access on Apple Watch for a third-party app) likely fails independently (§9 pass 6).
+
+The MESA items in §7 are retained as notes for any future revisit, not as planned work.
+
+## 7. Carry forward to the MESA pre-registration (not acted on)
 
 - The absolute **usefulness bar should be on AUPRC or precision at an operating point, not AUROC**. At 0.6–3.4 % prevalence, AUROC in the 0.6s coexists with AUPRC around 0.01–0.06.
 - Revisit the ectopic/artifact rule so it doesn't remove genuine physiological variability (see §4).
 - Resolve why RF > LR on CAP's averaged HR (alignment vs heterogeneity) before re-using "RF ≈ LR" as evidence of a signal ceiling.
 - Pre-specify where a plain INCONCLUSIVE routes.
+
+## Data and license
+
+The CAP Sleep Database is used under the **Open Data Commons Attribution License v1.0** (ODC-By), version 1.0.0, https://doi.org/10.13026/C2VC79. The committed files `cap_fit_table.csv` and `cap_ingest_qc.csv` and the stdout logs are derived metadata and results. Raw EDFs, hypnograms and derived signals are not committed (the gitignored `cap_raw/` and `cap_derived/`). Citations requested by PhysioNet:
+
+- Terzano MG, Parrino L, Sherieri A, Chervin R, Chokroverty S, Guilleminault C, Hirshkowitz M, Mahowald M, Moldofsky H, Rosa A, Thomas R, Walters A. Atlas, rules, and recording techniques for the scoring of cyclic alternating pattern (CAP) in human sleep. *Sleep Med* 2001;2(6):537–553.
+- Pollard T, Moody BE, Lehman L, Gow B, Fernandes C, Xie C, Johnson A, Mark RG, Heldt T. PhysioNet as a global platform for biomedical research. *Nature Health* (2026). https://doi.org/10.1038/s44360-026-00096-z
 
 ## Artifacts
 
