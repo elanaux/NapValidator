@@ -33,9 +33,9 @@ STAGE_MAP = {
 ASLEEP_STAGES = {"Core", "Deep", "REM", "AsleepUnspecified"}
 
 DEFAULT_EXPORT = os.path.expanduser(
-    "~/Desktop/nap-app/apple_health_export/export.xml"
+    "~/Documents/nap-app/apple_health_export/export.xml"
 )
-DEFAULT_OUTPUT_DIR = os.path.expanduser("~/Desktop/nap-app/apple_sleep")
+DEFAULT_OUTPUT_DIR = os.path.expanduser("~/Documents/nap-app/apple_sleep")
 
 # Records whose start times are within this many minutes of the running
 # session window get folded into the same session. Bridges brief wake gaps.

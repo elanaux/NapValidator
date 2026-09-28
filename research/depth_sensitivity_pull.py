@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from early_tail_pull import build, HARD_SD
 
-ROOT = "/Users/elanaux/Desktop/nap-app"
+ROOT = "/Users/elanaux/Documents/nap-app"
 MARGINS = [0, 2, 4, 6]
 DS = [0, 1, 2, 3, 5]
 

@@ -9,9 +9,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-SESSIONS_DIR = (SCRIPT_DIR / "../../sessions").resolve()
-OUTPUTS_DIR = (SCRIPT_DIR / "../outputs").resolve()
+SESSIONS_DIR = Path("~/Documents/nap-app/sessions/recovered").expanduser()
+OUTPUTS_DIR = Path("~/Documents/nap-app/analysis/outputs").expanduser()
 SESSION_FILE = SESSIONS_DIR / "0AF5B9C5-030E-4032-908F-D68CC95DA77E.json"
 
 

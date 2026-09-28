@@ -1,0 +1,9 @@
+# Direct dependencies for research/ scripts. Pinned to the versions in the
+# last known-working venv (Python 3.9.6). Rebuild with:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+matplotlib==3.9.4
+neurokit2==0.2.11
+numpy==2.0.2
+pywavelets==1.6.0  # neurokit2 imports pywt but does not declare it
+scikit-learn==1.6.1
+scipy==1.13.1

@@ -1,7 +1,7 @@
 """Shape-hypothesis analysis on two real overnights.
 
 Inputs (recovered files):
-  ~/Desktop/nap-app/sessions_recovered/overnight/{2026-05-17_AB2FFBAD,2026-05-20_8C86E7F9}.{hr,stages}.json
+  ~/Documents/nap-app/sessions_recovered/overnight/{2026-05-17_AB2FFBAD,2026-05-20_8C86E7F9}.{hr,stages}.json
 
 Q1: Rolling-60s HR-SD distribution in scored AsleepDeep vs AsleepCore.
     Key number: fraction of in-Deep rolling windows with SD < 0.8 (t_var).
@@ -11,7 +11,7 @@ Q3: 60s vs 90s vs 120s sustain windows inside Deep — sub-minute SD reset rate.
 Q4: Replay the dual (HR <= ref-5) AND (SD<0.8) sustained-60s trigger; check fires
     inside Apple-labeled Deep stretches and false fires elsewhere.
 
-Saves plots to ~/Desktop/nap-app/analysis_shape_hypothesis/
+Saves plots to ~/Documents/nap-app/analysis_shape_hypothesis/
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from collections import Counter
 import matplotlib.pyplot as plt
 import numpy as np
 
-OVERNIGHT_DIR = os.path.expanduser("~/Desktop/nap-app/sessions_recovered/overnight")
-OUT_DIR = os.path.expanduser("~/Desktop/nap-app/analysis_shape_hypothesis")
+OVERNIGHT_DIR = os.path.expanduser("~/Documents/nap-app/sessions_recovered/overnight")
+OUT_DIR = os.path.expanduser("~/Documents/nap-app/analysis_shape_hypothesis")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 SESSIONS = [

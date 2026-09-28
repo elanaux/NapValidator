@@ -33,7 +33,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = "/Users/elanaux/Desktop/nap-app"
+ROOT = "/Users/elanaux/Documents/nap-app"
 BID = f"{ROOT}/NapValidator/research/bidsleep"
 EPOCH_S = 30.0
 RUN = 3  # epochs for "sustained"

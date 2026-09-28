@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from onset_variance_pull import usable_nights, night_metrics  # locked logic
 
-ROOT = "/Users/elanaux/Desktop/nap-app"
+ROOT = "/Users/elanaux/Documents/nap-app"
 MARGINS = [0, 2, 4, 6]
 HARD_SD = 10.0  # "hard-swinging" = within-subject SD > 10 min (yesterday's ~19% cut)
 
